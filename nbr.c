@@ -7,10 +7,9 @@
 * When a node receives a beacon (from a different node) it switches to
 * aggressive mode (phase 1) and records the time.
 * While in aggressive mode, the node transmits with minimal sleep (i.e., high duty cycle)
-* until it receives an aggressive beacon from its partner. Then, it transitions
-* to phase 2 (discovery complete) and stops scanning.
-* If the 10-second aggressive phase elapses without two-way discovery, the node
-* reverts back to low duty cycle (phase 0) and continues discovery.
+* for a full 10-second window, ensuring ample time for both nodes to exchange aggressive beacons.
+* After the 10-second aggressive window, the node transitions to phase 2 (discovery complete)
+* and stops scanning.
 */
 
 #include "contiki.h"
@@ -20,7 +19,7 @@
 #include "lib/random.h"
 #include "net/linkaddr.h"
 #include <string.h>
-#include <stdio.h> 
+#include <stdio.h>
 #include "node-id.h"
 
 // Configures the wake-up timer for neighbour discovery 
@@ -52,42 +51,43 @@ static struct pt pt;
 static data_packet_struct data_packet;
 unsigned long curr_timestamp;
 
-// Global variables for managing aggressive mode
-// 0: phase 0 (low duty cycle), 1: phase 1 (aggressive mode), 2: phase 2 (discovery complete)
+// Global variables for managing mode:
+// mode 0: low duty cycle, mode 1: aggressive, mode 2: discovery complete (sleep)
 static uint8_t mode = 0;
+// Record the start time when switching to aggressive mode.
 static unsigned long aggressive_start_time = 0;
 
 /*---------------------------------------------------------------------------*/
-// Process declaration is mandatory.
+// Process declaration.
 PROCESS(nbr_discovery_process, "cc2650 neighbour discovery process");
 
 /*---------------------------------------------------------------------------*/
 // Receive callback: process incoming discovery packets.
-void receive_packet_callback(const void *data, uint16_t len, 
+void receive_packet_callback(const void *data, uint16_t len,
                              const linkaddr_t *src, const linkaddr_t *dest) {
   printf("Received packet from %d.%d to %d.%d\n",
          src->u8[0], src->u8[1], dest->u8[0], dest->u8[1]);
   if(len == sizeof(data_packet_struct)) {
     static data_packet_struct received_packet;
     memcpy(&received_packet, data, len);
-
+    
     printf("Received neighbour discovery packet %lu with rssi %d from %ld, phase %d\n",
            received_packet.seq,
            (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI),
            received_packet.src_id,
            received_packet.phase);
-
+    
     // If the packet is from a different node:
     if(received_packet.src_id != data_packet.src_id) {
       if(mode == 0) {
-        // Not yet in aggressive mode: switch to phase 1
+        // Not yet in aggressive mode: switch to phase 1.
         mode = 1;
         aggressive_start_time = clock_time();
         printf("Switching to aggressive mode at %lu ticks\n", aggressive_start_time);
       } else if(mode == 1 && received_packet.phase == 1) {
-        // Both nodes are in aggressive mode -> two-way discovery complete.
-        mode = 2;
-        printf("Two-way discovery complete at %lu ticks. Entering sleep mode.\n", clock_time());
+        // Two-way discovery has been confirmed by the partner,
+        // but remain in aggressive mode for the full 10-second window.
+        printf("Two-way discovery confirmed from partner at %lu ticks. Remaining in aggressive mode until 10 seconds elapse.\n", clock_time());
       }
     }
   }
@@ -115,96 +115,92 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
       NETSTACK_RADIO.off();
       PT_EXIT(&pt);
     }
-
+    
     // Turn the radio on before transmitting.
     NETSTACK_RADIO.on();
-
+    
     // Set the data packet's phase field to current mode.
     data_packet.phase = mode;
-
+    
     // Transmit the discovery beacons.
     for(i = 0; i < NUM_SEND; i++) {
       nullnet_buf = (uint8_t *)&data_packet;
       nullnet_len = sizeof(data_packet);
-
+      
       data_packet.seq++;
       curr_timestamp = clock_time();
       data_packet.timestamp = curr_timestamp;
-
+      
       printf("Send seq# %lu  @ %8lu ticks   %3lu.%03lu, phase %d\n",
              data_packet.seq,
              curr_timestamp,
              curr_timestamp / CLOCK_SECOND,
              ((curr_timestamp % CLOCK_SECOND) * 1000) / CLOCK_SECOND,
              data_packet.phase);
-
+      
       NETSTACK_NETWORK.output(&dest_addr);
-
+      
       if(i != (NUM_SEND - 1)) {
         rtimer_set(t, RTIMER_TIME(t) + WAKE_TIME, 1,
                    (rtimer_callback_t)sender_scheduler, ptr);
         PT_YIELD(&pt);
       }
     }
-
+    
     // Turn off the radio to save power.
     NETSTACK_RADIO.off();
-
+    
     current = clock_time();
-
-    // Determine sleep interval based on the current mode.
+    
     if(mode == 1) {
-      // In aggressive mode, use minimal sleep (1 slot) to maximize packet frequency.
-      // Also, if the aggressive phase has lasted beyond 10 seconds without completing,
-      // revert back to low duty cycle (phase 0).
+      // In aggressive mode, use minimal sleep (1 slot) until 10 seconds have passed
       if((current - aggressive_start_time) < (10 * CLOCK_SECOND)) {
         sleep_count = 1;
       } else {
-        // Aggressive phase expired without two-way discovery.
-        mode = 0;
-        sleep_count = LOW_SLEEP_COUNT;
-        printf("Aggressive phase timed out. Reverting to low duty cycle mode.\n");
+        // Aggressive phase is over: transition to phase 2 (discovery complete) and stop transmitting.
+        mode = 2;
+        printf("Aggressive window expired. Transitioning to sleep mode.\n");
       }
     } else {  // mode == 0: low duty cycle mode.
       sleep_count = LOW_SLEEP_COUNT;
     }
-
+    
     printf("Sleep for %d slots (mode %d)\n", sleep_count, mode);
-    for(i = 0; i < sleep_count; i++) {
+    for(i = 0; i < sleep_count; i++){
       rtimer_set(t, RTIMER_TIME(t) + SLEEP_SLOT, 1,
                  (rtimer_callback_t)sender_scheduler, ptr);
       PT_YIELD(&pt);
     }
   }
-
+  
   PT_END(&pt);
 }
 
 /*---------------------------------------------------------------------------*/
 // Main process to initialize neighbour discovery.
-// Apply __attribute__((used)) as required.
+// The __attribute__((used)) is applied as needed.
 __attribute__((used))
 PROCESS_THREAD(nbr_discovery_process, ev, data) {
   PROCESS_BEGIN();
-
+  
   // Initialize our data packet.
   data_packet.src_id = node_id;
   data_packet.seq = 0;
   data_packet.phase = 0;  // Start in low duty cycle mode (phase 0).
-
+  
   nullnet_set_input_callback(receive_packet_callback);
   linkaddr_copy(&dest_addr, &linkaddr_null);
-
+  
   printf("CC2650 neighbour discovery\n");
   printf("Node %d will be sending packet of size %d Bytes\n",
          node_id, (int)sizeof(data_packet_struct));
-
+  
   // Start the sender shortly after boot.
   rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1,
              (rtimer_callback_t)sender_scheduler, NULL);
-
+  
   PROCESS_END();
 }
 
-// Autostart our process.
+// Start the process automatically.
 AUTOSTART_PROCESSES(&nbr_discovery_process);
