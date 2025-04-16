@@ -78,7 +78,6 @@ void receive_packet_callback(const void *data, uint16_t len,
            received_packet.phase);
     
     // If the packet is from a different node:
-    if(received_packet.src_id != data_packet.src_id) {
       if(mode == 0) {
         // Not yet in aggressive mode: switch to phase 1.
         mode = 1;
@@ -90,7 +89,6 @@ void receive_packet_callback(const void *data, uint16_t len,
         printf("Two-way discovery confirmed from partner at %lu ticks. Remaining in aggressive mode until 10 seconds elapse.\n", clock_time());
       }
     }
-  }
 }
 
 /*---------------------------------------------------------------------------*/
