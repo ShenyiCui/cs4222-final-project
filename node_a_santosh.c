@@ -88,7 +88,8 @@ void timer_callback(struct rtimer *t, void *ptr) {
   if (sample_idx < SAMPLES) {
       rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
   } else {
-
+    // Send the chunk
+    rtimer_set(
   }
 }
 
@@ -116,19 +117,20 @@ void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const lin
 }
 
 void send_chunks(struct rtimer *t, void *ptr) {
-    data_pkt_t *pkt = (data_pkt_t *)ptr;
-    pkt->type = PKT_DATA;
-    pkt->seq = curr_chunk;
-    for(uint8_t i=0; i<CHUNK_SIZE; i++){
-        uint8_t idx = curr_chunk*CHUNK_SIZE + i;
-        pkt->payload[2*i] = light_buf[idx];
-        pkt->payload[2*i+1] = motion_buf[idx];
-    }
-    nullnet_buf = (uint8_t *)pkt;
-    nullnet_len = sizeof(data_pkt_t);
-    printf("Sending chunk %d\n", curr_chunk);
-    NETSTACK_NETWORK.output(&peer);
-    
+    if (peer_set && good_cnt > 2) {
+        data_pkt_t *pkt = (data_pkt_t *)ptr;
+        pkt->type = PKT_DATA;
+        pkt->seq = curr_chunk;
+        for(uint8_t i=0; i<CHUNK_SIZE; i++){
+            uint8_t idx = curr_chunk*CHUNK_SIZE + i;
+            pkt->payload[2*i] = light_buf[idx];
+            pkt->payload[2*i+1] = motion_buf[idx];
+        }
+        nullnet_buf = (uint8_t *)pkt;
+        nullnet_len = sizeof(data_pkt_t);
+        printf("Sending chunk %d\n", curr_chunk);
+        NETSTACK_NETWORK.output(&peer);
+    } 
     rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0, send_chunks, ptr);
 }
 
