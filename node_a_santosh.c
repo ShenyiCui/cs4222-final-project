@@ -89,7 +89,7 @@ void timer_callback(struct rtimer *t, void *ptr) {
       rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
   } else {
     // Send the chunk
-    rtimer_set(
+    rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, send_chunks, NULL);
   }
 }
 
