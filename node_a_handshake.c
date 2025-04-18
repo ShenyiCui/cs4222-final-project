@@ -65,6 +65,7 @@ static int16_t motion_readings[SAMPLES];
 static uint8_t sample_idx = 0;
 static int curr_chunk = 0;
 
+static int send_req_cycle = 0; 
 static uint8_t good_cnt = 0; // No. of consecutive REQ_ACK packets with good RSSI
 #define RSSI_GOOD_THRESHOLD (-70)
 static int peer_set = 0;
@@ -114,6 +115,15 @@ static float get_mpu_reading(void){
 static void send_request(struct rtimer *t, void *ptr){
   if(link_state != LINK_SEARCHING) return;
 
+  send_req_cycle = (send_req_cycle + 1) % 5;
+
+  if (send_req_cycle == 0) {
+    int16_t light = get_light_reading();
+    int16_t motion = (int)get_mpu_reading();
+    printf("COLLECTING DATA: Sample %u light=%d mpu=%d\n", sample_idx, light, motion);
+    enqueue(light, motion);
+  }
+
   req_pkt_t req = { PKT_REQUEST, node_id };
   nullnet_buf = (uint8_t *)&req;
   nullnet_len = sizeof(req);
@@ -138,32 +148,19 @@ static void end_listening(struct rtimer *t, void *ptr){
 }
 
 static void get_readings(struct rtimer *t, void *ptr){
-  if (link_state == LINK_UP) {
-    return;
-  }
+  light_readings[sample_idx] = get_light_reading();
+  motion_readings[sample_idx] = (int)get_mpu_reading();
+  printf("COLLECTING DATA: Sample %u light=%d mpu=%d\n", sample_idx, light_readings[sample_idx], motion_readings[sample_idx]);
+  sample_idx++;
 
-  int16_t light = get_light_reading();
-  int16_t motion = (int)get_mpu_reading();
-  printf("COLLECTING DATA: Sample %u light=%d mpu=%d\n", sample_idx, light, motion);
-
-  if (sample_idx >= SAMPLES) {
-    enqueue(light, motion);
+  if(sample_idx < SAMPLES){
+    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
   } else {
-    light_readings[sample_idx] = light;
-    motion_readings[sample_idx] = motion;
-    sample_idx++;
-  }
-
-  if (sample_idx == SAMPLES) {
     curr_chunk = 0;
     link_state = LINK_SEARCHING;
     peer_set = 0;
     good_cnt = 0;
-    sample_idx++;
-    rtimer_set(&rt, RTIMER_NOW() + SLEEP_SLOT, 0, send_request, NULL);
-    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
-  } else {
-    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
+    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, send_request, NULL);
   }
 }
 
