@@ -67,6 +67,7 @@ static int curr_chunk = 0;
 
 static int send_req_cycle = 0; 
 static uint8_t good_cnt = 0; // No. of consecutive REQ_ACK packets with good RSSI
+static int total_rssi = 0; // Total RSSI of all REQ_ACK packets
 #define RSSI_GOOD_THRESHOLD (-70)
 static int peer_set = 0;
 static linkaddr_t peer;
@@ -118,6 +119,7 @@ static void send_request(struct rtimer *t, void *ptr){
   send_req_cycle = (send_req_cycle + 1) % 5;
 
   if (send_req_cycle == 0) {
+    // Each send and listen cycle lasts 1/5 second, so every 5 cycles we refresh the samples
     int16_t light = get_light_reading();
     int16_t motion = (int)get_mpu_reading();
     printf("COLLECTING DATA: Sample %u light=%d mpu=%d\n", sample_idx, light, motion);
@@ -177,21 +179,23 @@ static void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, co
     signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
 
     if(!peer_set){
-        linkaddr_copy(&peer, src);
-        peer_set = 1;
-        good_cnt = 0;
+      linkaddr_copy(&peer, src);
+      peer_set = 1;
+      good_cnt = 0;
     }
     if(linkaddr_cmp(src,&peer) && rssi >= RSSI_GOOD_THRESHOLD){
         good_cnt++;
     } else if(linkaddr_cmp(src,&peer)){
         good_cnt = 0;
     }
-
-    printf("%lu DETECT node %u REQ_ACK cnt=%u rssi=%d\n", clock_seconds(), sender_id, good_cnt, rssi);
+    printf("%lu DETECT %u\n", clock_seconds(), sender_id);
+    printf("%lu node %u REQ_ACK cnt=%u rssi=%d\n", clock_seconds(), sender_id, good_cnt, rssi);
+    total_rssi += rssi;
 
     if(good_cnt >= 3 && link_state == LINK_SEARCHING){
         link_state = LINK_UP;
         printf("Establishing good connection with neighbour - starting data transfer\n\n");
+        printf("%lu TRANSFER %u RSSI: %d \n", clock_seconds(), sender_id, (int)total_rssi/good_cnt);
         // first chunk will be scheduled by end_listening()
     }
   } else if(type == PKT_ACK) {
@@ -205,7 +209,7 @@ static void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, co
 
     if(ackseq == curr_chunk) {
       uint16_t sender_id = ack->src_id;
-      printf("%lu DETECT node %u  PKT_ACK seq=%u  rssi=%d\n", clock_seconds(), sender_id, curr_chunk, rssi);
+      printf("%lu node %u  PKT_ACK seq=%u  rssi=%d\n", clock_seconds(), sender_id, curr_chunk, rssi);
 
       if((curr_chunk + 1)*CHUNK_SIZE >= SAMPLES){
         printf("Transfer complete\n");
@@ -215,6 +219,9 @@ static void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, co
         peer_set   = 0;
         good_cnt   = 0;
         curr_chunk = -1;
+        link_state = LINK_SEARCHING;
+        total_rssi = 0;
+        send_req_cycle = 0;
       }else{
         curr_chunk++;
       }
@@ -226,8 +233,7 @@ static void send_chunks(struct rtimer *t, void *ptr) {
   if(link_state != LINK_UP || curr_chunk == -1){
     return;
   }
-  // printf in the format: <timestamp_in_seconds> TRANSFER <nodeID>
-  printf("%lu TRANSFER %u\n", clock_seconds(), node_id);
+  printf("%lu Sending chunk %d to %u\n", clock_seconds(), curr_chunk, node_id);
 
   last_sent_seq = curr_chunk;
   awaiting_ack = 1;
@@ -258,6 +264,9 @@ static void listen_chunk_ack(struct rtimer *t, void *ptr){
     rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0, send_chunks, NULL);
   }else if(curr_chunk != -1){
     rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0, send_chunks, NULL);
+  } else {
+    printf("Restarting reading cycle\n");
+    rtimer_set(t, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
   }
 }
 

@@ -80,12 +80,12 @@ static void node_b_receive_callback(const void *data, uint16_t len, const linkad
     nullnet_buf = (uint8_t *)&ra;
     nullnet_len = sizeof(ra);
     NETSTACK_NETWORK.output(src);
-    printf("TX REQ_ACK\n\n");
+    printf("Sending REQ_ACK\n\n");
   } else if(packet_type == PKT_DATA) {
     data_pkt_t pkt;
     memcpy(&pkt, data, len);
 
-    printf("RX DATA chunk %d\n", pkt.seq);
+    printf("Receiving Data chunk %d\n", pkt.seq);
     
     for(uint8_t i=0; i<CHUNK_SIZE; i++) {
       uint8_t idx = pkt.seq*CHUNK_SIZE + i;
