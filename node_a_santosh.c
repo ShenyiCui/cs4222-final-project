@@ -85,16 +85,10 @@ void timer_callback(struct rtimer *t, void *ptr) {
   light = get_light_reading();
   mpu = get_mpu_reading();
 
-  // Print the Light readings
-  printf("Sample no. %d\n", sample_idx);
-  printf("Light = %d\n", (int)light);
-  // Print the MPU readings
-  printf("MPU = %d\n", (int)mpu);
+  printf("Sample no. %d, Light = %d, MPU = %d\n", sample_idx, (int)light, (int)mpu);
 
   light_buf[sample_idx] = (int) light;
   motion_buf[sample_idx] = (int) mpu;
-  printf("Light = %d\n", light_buf[sample_idx]);
-  printf("MPU = %d\n", motion_buf[sample_idx]);
   sample_idx++;
   
   // Schedule the next callback after 250ms.
@@ -126,7 +120,7 @@ void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const lin
         uint8_t ackseq=((uint8_t*)data)[1];
         if(ackseq==curr_chunk){
             printf("ACK received for seq %d\n", ackseq);
-            if (curr_chunk*CHUNK_SIZE>=SAMPLES){
+            if ((curr_chunk+1)*CHUNK_SIZE>=SAMPLES){
                 // Transfer complete
                 printf("Transfer complete\n");
                 memset(light_buf, 0, sizeof(light_buf));
@@ -150,8 +144,7 @@ void send_chunks(struct rtimer *t, void *ptr) {
             uint8_t idx = curr_chunk*CHUNK_SIZE + i;
             data_packet.payload[2*i] = light_buf[idx];
             data_packet.payload[2*i+1] = motion_buf[idx];
-            printf("Actual buffer values: idx_value %d, light %d, motion %d\n", idx, light_buf[idx], motion_buf[idx]);
-            printf("Sending chunk %d, sample %d: light %d, motion %d\n", curr_chunk, idx, data_packet.payload[2*i], data_packet.payload[2*i+1]);
+            // printf("Sending chunk %d, sample %d: light %d, motion %d\n", curr_chunk, idx, data_packet.payload[2*i], data_packet.payload[2*i+1]);
         }
         nullnet_buf = (uint8_t *)&data_packet;
         nullnet_len = sizeof(data_packet);
