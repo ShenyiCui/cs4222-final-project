@@ -47,6 +47,9 @@ static void init_mpu_reading(void);
 static int get_light_reading(void);
 static float get_mpu_reading(void);
 
+void send_chunks(struct rtimer *t, void *ptr);
+static void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest);
+
 /* ------------ buffers ------------ */
 static int16_t light_buf[SAMPLES];     // store as 16‑bit to fit MTU
 static int16_t motion_buf[SAMPLES];
@@ -76,6 +79,7 @@ void timer_callback(struct rtimer *t, void *ptr) {
   mpu = get_mpu_reading();
 
   // Print the Light readings
+  printf("Sample no. %d\n", sample_idx);
   printf("Light = %d.%02d\n", (int)light, (int)(light * 100) % 100);
   // Print the MPU readings
   printf("MPU = %d.%02d\n", (int)mpu, (int)(mpu * 100) % 100);
