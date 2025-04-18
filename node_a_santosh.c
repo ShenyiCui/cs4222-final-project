@@ -138,6 +138,7 @@ void send_chunks(struct rtimer *t, void *ptr) {
             uint8_t idx = curr_chunk*CHUNK_SIZE + i;
             data_packet.payload[2*i] = light_buf[idx];
             data_packet.payload[2*i+1] = motion_buf[idx];
+            printf("Actual buffer values: light %d, motion %d\n", light_buf[idx], motion_buf[idx]);
             printf("Sending chunk %d, sample %d: light %d, motion %d\n", curr_chunk, idx, data_packet.payload[2*i], data_packet.payload[2*i+1]);
         }
         nullnet_buf = (uint8_t *)&data_packet;
