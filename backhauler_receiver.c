@@ -21,6 +21,24 @@
 #include <string.h>
 #include <stdio.h>
 #include "node-id.h"
+#include "sys/rtimer.h"
+#include "board-peripherals.h"
+#include <math.h>
+
+#define LIGHT_THRESHOLD 300
+#define MOTION_THRESHOLD 1.5f
+
+#define SAMPLES 60
+#define CHUNK_SIZE 20
+
+static void init_opt_reading(void);
+static void init_mpu_reading(void);
+static int get_light_reading(void);
+static float get_mpu_reading(void);
+
+static int light_buf[SAMPLES];
+static int motion_buf[SAMPLES];
+static int num_samples = 0;
 
 // Configures the wake-up timer for neighbour discovery 
 #define WAKE_TIME RTIMER_SECOND/10    // 10 Hz, 0.1 s
@@ -203,12 +221,90 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
   PT_END(&pt);
 }
 
+static int
+get_light_reading()
+{
+    int value;
+    value = opt_3001_sensor.value(0);
+
+    if (value != CC26XX_SENSOR_READING_ERROR)
+    {
+       // printf("OPT: Light=%d.%02d lux\n", value / 100, value % 100);
+       init_opt_reading();
+       return value / 100;
+    }
+    else
+    {
+       printf("OPT: Light Sensor's Warming Up\n\n");
+       init_opt_reading();
+       return -1;
+    }
+}
+
+static float get_mpu_reading()
+{
+    int ax = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_X) / 100;
+    int ay = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Y) / 100;
+    int az = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Z) / 100;
+
+    // Convert to float if needed and calculate the vector magnitude
+    float x = (float)ax;
+    float y = (float)ay;
+    float z = (float)az;
+    float magnitude = sqrt(x * x + y * y + z * z);
+
+   //  printf("MPU: Acc=%d,%d,%d, Magnitude=%d.%02d\n", ax, ay, az, (int)magnitude, (int)(magnitude * 100) % 100);
+    return magnitude;
+}
+
+static void
+init_opt_reading(void)
+{
+    SENSORS_ACTIVATE(opt_3001_sensor);
+}
+
+static void
+init_mpu_reading(void)
+{
+  mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL);
+}
+
+void get_readings(struct rtimer *timer, void *ptr) {
+  // Get the light and motion readings and store them in the buffer
+    light_buf[num_samples] = get_light_reading();
+    motion_buf[num_samples] = get_mpu_reading();
+    num_samples++;
+    // schedule the next reading in 1 second
+    if (num_samples < SAMPLES) {
+        rtimer_set(timer, RTIMER_NOW() + RTIMER_SECOND, 1,
+                   (rtimer_callback_t)get_readings, NULL);
+    } else {
+        // Stop the readings after SAMPLES
+        num_samples = 0;
+        printf("All samples collected.\n");
+        // print all the readings
+        printf("Light: ");
+        for (int i = 0; i < SAMPLES; i++) {
+            printf(i ? ", %d" : " %d", light_buf[i]);
+        }
+        printf("\nMotion: ");
+        for (int i = 0; i < SAMPLES; i++) {
+            printf(i ? ", %d" : " %d", motion_buf[i]);
+        }
+    }
+}
+
 /*---------------------------------------------------------------------------*/
 // Main process to initialize neighbour discovery.
 // The __attribute__((used)) is applied as needed.
 __attribute__((used))
 PROCESS_THREAD(nbr_discovery_process, ev, data) {
   PROCESS_BEGIN();
+  init_opt_reading();
+  init_mpu_reading();
+
+  rtimer_set(&rt, RTIMER_NOW() + RTIMER_SECOND, 1,
+             (rtimer_callback_t)get_readings, NULL);
   
   // Initialize our data packet.
   data_packet.src_id = node_id;
@@ -223,8 +319,8 @@ PROCESS_THREAD(nbr_discovery_process, ev, data) {
          node_id, (int)sizeof(data_packet_struct));
   
   // Start the sender shortly after boot.
-  rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1,
-             (rtimer_callback_t)sender_scheduler, NULL);
+  // rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1,
+            //  (rtimer_callback_t)sender_scheduler, NULL);
   
   PROCESS_END();
 }
