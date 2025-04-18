@@ -219,7 +219,6 @@ static void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, co
         peer_set   = 0;
         good_cnt   = 0;
         curr_chunk = -1;
-        link_state = LINK_SEARCHING;
         total_rssi = 0;
         send_req_cycle = 0;
       }else{
@@ -266,6 +265,7 @@ static void listen_chunk_ack(struct rtimer *t, void *ptr){
     rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0, send_chunks, NULL);
   } else {
     printf("Restarting reading cycle\n");
+    link_state = LINK_SEARCHING;
     rtimer_set(t, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
   }
 }
