@@ -109,7 +109,7 @@ void timer_callback(struct rtimer *t, void *ptr) {
 void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest) {
     // Wait for a PKT_BEACON packet and get RSSI
     // If RSSI is good for 3 consecutive packets, set peer_set to 1
-    if(len != sizeof(data_packet_struct)) return;
+    // if(len != sizeof(data_packet_struct)) return;
     static data_packet_struct pkt; memcpy(&pkt,data,len);
 
     uint8_t type = ((uint8_t*)data)[0];

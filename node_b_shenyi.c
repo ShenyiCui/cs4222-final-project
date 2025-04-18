@@ -55,7 +55,7 @@ static void send_beacon(void){
 
 /* input */
 static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest){
-  if(len != sizeof(data_packet_struct)) return;
+  // if(len != sizeof(data_packet_struct)) return;
   static data_packet_struct pkt; memcpy(&pkt,data,len);
 
   // uint8_t type = ((uint8_t*)data)[0];
@@ -73,22 +73,11 @@ static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *sr
     uint8_t idx = pkt.seq * CHUNK_SIZE + i;
     light_buf[idx] = pkt.payload[2*i];
     motion_buf[idx] = pkt.payload[2*i+1];
+    printf("Received chunk %d, sample %d: light %d, motion %d\n", pkt.seq, idx, light_buf[idx], motion_buf[idx]);
   }
 
   send_ack(src, pkt.seq);
   chunks_rx++;
-
-  if(chunks_rx * CHUNK_SIZE >= SAMPLES){
-    printf("Light:"); 
-    for(uint8_t i=0; i < SAMPLES; i++) {
-      printf(i?", %d":" %d", light_buf[i]);
-    }
-    printf("\nMotion:");
-    for(uint8_t i=0; i < SAMPLES; i++) {
-      printf(i?", %d":" %d", motion_buf[i]);
-    }
-    printf("\n");
-  }
   // }
 }
 
