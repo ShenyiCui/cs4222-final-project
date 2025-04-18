@@ -84,7 +84,7 @@ void timer_callback(struct rtimer *t, void *ptr) {
   printf("MPU = %d.%02d\n", (int)mpu, (int)(mpu * 100) % 100);
 
   light_buf[sample_idx] = light;
-  motion_buf[sample_idx] = (int16_t)mpu;
+  motion_buf[sample_idx] = mpu;
     sample_idx++;
   
   // Schedule the next callback after 250ms.
