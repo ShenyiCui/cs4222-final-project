@@ -11,48 +11,47 @@
 #include "net/packetbuf.h"
 #include "node-id.h"
 
-#define SAMPLES     60 // No. of samples we are collecting
-#define CHUNK_SIZE  20 // Number of readings in each packet (chunk)
+#define SAMPLES 60 // No. of samples we are collecting
+#define CHUNK_SIZE 20 // Number of readings in each packet (chunk)
 
-#define WAKE_TIME       (RTIMER_SECOND / 10)   // Wake time for neighbour discovery
-#define SLEEP_INTERVAL  (RTIMER_SECOND / 4)    // Sleep time between receiving
+#define WAKE_TIME (RTIMER_SECOND / 10)   // Wake time for neighbour discovery
+#define SLEEP_INTERVAL (RTIMER_SECOND / 4)    // Sleep time between receiving
 
 // Packet types
-#define PKT_BEACON   0x01
-#define PKT_REQUEST  0x02
-#define PKT_DATA     0x03
-#define PKT_ACK      0x04
-#define PKT_REQ_ACK  0x05
+#define PKT_BEACON 0x01
+#define PKT_REQUEST 0x02
+#define PKT_DATA 0x03
+#define PKT_ACK 0x04
+#define PKT_REQ_ACK 0x05
 
 typedef struct __attribute__((packed)) {
-  uint8_t  type;  // Packet type        
-  uint16_t src_id;   
-} req_pkt_t;        
-
-typedef struct __attribute__((packed)) {
-  uint8_t  type;         
-  uint16_t src_id;      
-  uint8_t  seq; // Chunk number          
-} ack_pkt_t;      
-
-typedef struct __attribute__((packed)) {
-  uint8_t  type;       
+  uint8_t type;  // Packet type
   uint16_t src_id;
-  uint8_t  seq;         
-  int16_t  payload[CHUNK_SIZE * 2]; // Light and motion data
+} req_pkt_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t type;
+  uint16_t src_id;
+  uint8_t seq; // Chunk number
+} ack_pkt_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t type;
+  uint16_t src_id;
+  uint8_t seq;
+  int16_t payload[CHUNK_SIZE * 2]; // Light and motion data
 } data_pkt_t;
 
 
-static uint8_t chunks_received   = 0; // No. of chunks received so far
+static uint8_t chunks_received = 0; // No. of chunks received so far
 static uint8_t is_tranmission_complete = 0; 
-static int16_t  light_readings[SAMPLES];
-static int16_t  motion_readings[SAMPLES];
+static int16_t light_readings[SAMPLES];
+static int16_t motion_readings[SAMPLES];
 
 static struct rtimer rt;
 static void end_listen(struct rtimer *t, void *ptr);
 static void start_listen(struct rtimer *t, void *ptr);
-static void node_b_receive_callback(const void *data, uint16_t len,
-                      const linkaddr_t *src, const linkaddr_t *dest);
+static void node_b_receive_callback(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest);
 
 // End listening and schedule next listen
 static void end_listen(struct rtimer *t, void *ptr) {
@@ -90,7 +89,7 @@ static void node_b_receive_callback(const void *data, uint16_t len, const linkad
     
     for(uint8_t i=0; i<CHUNK_SIZE; i++) {
       uint8_t idx = pkt.seq*CHUNK_SIZE + i;
-      light_readings[idx]  = pkt.payload[2*i];
+      light_readings[idx] = pkt.payload[2*i];
       motion_readings[idx] = pkt.payload[2*i+1];
       // printf(" sample %d  light=%d  motion=%d\n",
       //        idx, light_readings[idx], motion_readings[idx]);
@@ -121,7 +120,7 @@ static void node_b_receive_callback(const void *data, uint16_t len, const linkad
     }
 
     // Reset the state
-    chunks_received   = 0;
+    chunks_received = 0;
     is_tranmission_complete = 0;
   }
 }

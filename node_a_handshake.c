@@ -1,3 +1,5 @@
+// TRANSMITTER CODE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -16,78 +18,82 @@
 PROCESS(process_rtimer, "RTimer");
 AUTOSTART_PROCESSES(&process_rtimer);
 
-/* ------------ parameters ------------ */
-#define SAMPLE_INTERVAL    CLOCK_SECOND          // 1 Hz
-#define SAMPLES            60
-#define CHUNK_SIZE         20                   // 3 chunks
-#define SEND_CHUNK_INTERVAL      (RTIMER_SECOND / 4) // 250ms
-/* radio duty‑cycling for request/ack phase */
-#define WAKE_TIME   (RTIMER_SECOND / 10)   /* 100 ms listening window  */
-#define SLEEP_SLOT  (RTIMER_SECOND / 10)   /* 100 ms sleep before next request */
+#define SAMPLES 60 // No. of samples we are collecting
+#define CHUNK_SIZE 20 // Number of readings in each packet (chunk)
+#define SEND_CHUNK_INTERVAL (RTIMER_SECOND / 4) // Interval between sending chunks
+#define MAX_CHUNK_TRIES 20 // Max tries to send a chunk before giving up
 
-/* ------------ packet types ------------ */
-#define PKT_BEACON   0x01
-#define PKT_REQUEST  0x02   // request for data
-#define PKT_DATA     0x03   // sensor chunk
-#define PKT_ACK      0x04   // ack each chunk
-#define PKT_REQ_ACK  0x05   // reply to PKT_REQUEST
+#define WAKE_TIME (RTIMER_SECOND / 10)   // Wake time for neighbour discovery
+#define SLEEP_SLOT (RTIMER_SECOND / 10)   // Sleep time between receiving
 
-/* ---- common packet formats ---- */
-typedef struct __attribute__((packed)) {
-  uint8_t  type;          /* PKT_* */
-  uint16_t src_id;        /* node_id of sender                */
-} req_pkt_t;              /* also reused for plain beacons     */
+// Packet types
+#define PKT_BEACON 0x01
+#define PKT_REQUEST 0x02
+#define PKT_DATA 0x03
+#define PKT_ACK 0x04
+#define PKT_REQ_ACK 0x05
+
 
 typedef struct __attribute__((packed)) {
-  uint8_t  type;          /* PKT_* */
-  uint16_t src_id;        /* node_id of sender                */
-  uint8_t  seq;           /* chunk number (or 0)              */
-} ack_pkt_t;              /* used for REQ_ACK and DATA_ACK    */
+  uint8_t type;   // Packet type
+  uint16_t src_id;
+} req_pkt_t;
 
 typedef struct __attribute__((packed)) {
-  uint8_t  type;          /* PKT_DATA                         */
-  uint16_t src_id;        /* node_id of sender                */
-  uint8_t  seq;           /* chunk number                     */
-  int16_t  payload[CHUNK_SIZE * 2];
+  uint8_t type;
+  uint16_t src_id;
+  uint8_t seq;   // Chunk number
+} ack_pkt_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t type;
+  uint16_t src_id;
+  uint8_t seq;
+  int16_t payload[CHUNK_SIZE * 2]; // Light and motion data
 } data_pkt_t;
 
 static data_pkt_t data_packet;
 
 
-/* ------------ link state ------------ */
 typedef enum { LINK_SEARCHING = 0, LINK_UP = 1 } link_state_t;
 static link_state_t link_state = LINK_SEARCHING;
 
-/* ------------ globals ------------ */
-static struct rtimer timer_rtimer;
-static rtimer_clock_t interval = RTIMER_SECOND / 4;
-static int16_t light_buf[SAMPLES];
-static int16_t motion_buf[SAMPLES];
+static struct rtimer rt;
+static rtimer_clock_t sampling_interval = RTIMER_SECOND; // Sampling interval for 1hz
+static int16_t light_readings[SAMPLES];
+static int16_t motion_readings[SAMPLES];
 static uint8_t sample_idx = 0;
-static int      curr_chunk = 0;
+static int curr_chunk = 0;
 
-static uint8_t  good_cnt  = 0;           /* consecutive REQ‑ACK ≥ ‑70 dBm */
+static uint8_t good_cnt = 0; // No. of consecutive REQ_ACK packets with good RSSI
+static uint8_t curr_chunk_tries = 0;
 #define RSSI_GOOD_THRESHOLD (-70)
-static int            peer_set = 0;
-static linkaddr_t     peer;
+static int peer_set = 0;
+static linkaddr_t peer;
 
-static int awaiting_ack   = 0;   /* 1 while waiting for ACK               */
-static int last_sent_seq  = -1;  /* sequence number of the last chunk TX  */
+static int awaiting_ack = 0; 
+static int last_sent_seq = -1; 
 
-/* forward decls */
 static void send_chunks(struct rtimer *t, void *ptr);
 static void send_request(struct rtimer *t, void *ptr);
-static void listen_window_end(struct rtimer *t, void *ptr);
-static void chunk_listen_end(struct rtimer *t, void *ptr);
+static void end_listening(struct rtimer *t, void *ptr);
+static void listen_chunk_ack(struct rtimer *t, void *ptr);
 
-/* ------------ sensor helpers ------------ */
-static void   init_opt_reading(void) { SENSORS_ACTIVATE(opt_3001_sensor); }
-static void   init_mpu_reading(void){ mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL); }
+static void init_opt_reading(void) { 
+  SENSORS_ACTIVATE(opt_3001_sensor); 
+}
+static void init_mpu_reading(void){ 
+  mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL); 
+}
 
 static int get_light_reading(void){
-  int v = opt_3001_sensor.value(0);
+  int val = opt_3001_sensor.value(0);
   init_opt_reading();
-  return (v == CC26XX_SENSOR_READING_ERROR) ? -1 : v/100;
+  if(val == CC26XX_SENSOR_READING_ERROR) {
+    return -1;
+  } else {
+    return val/100;
+  } 
 }
 static float get_mpu_reading(void){
   int ax = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_X)/100;
@@ -96,66 +102,54 @@ static float get_mpu_reading(void){
   return sqrtf((float)(ax*ax + ay*ay + az*az));
 }
 
-/* ------------ request sender ------------ */
+// Send request packets to discover neighbours
 static void send_request(struct rtimer *t, void *ptr){
   if(link_state != LINK_SEARCHING) return;
 
   req_pkt_t req = { PKT_REQUEST, node_id };
-  nullnet_buf   = (uint8_t *)&req;
-  nullnet_len   = sizeof(req);
-  NETSTACK_NETWORK.output(NULL);          /* broadcast */
-  printf("TX REQUEST\n");
+  nullnet_buf = (uint8_t *)&req;
+  nullnet_len = sizeof(req);
+  NETSTACK_NETWORK.output(NULL);
+  printf("Sending Request Packet\n");
 
-  /* Keep the radio on so we can hear the REQ_ACK replies */
   NETSTACK_RADIO.on();
 
-  /* After WAKE_TIME, close the window and schedule the next action */
-  rtimer_set(t, RTIMER_NOW() + WAKE_TIME, 0,
-             listen_window_end, NULL);
+  rtimer_set(t, RTIMER_NOW() + WAKE_TIME, 0, end_listening, NULL);
 }
 
-/* ------------ listen window end ------------ */
-static void listen_window_end(struct rtimer *t, void *ptr){
-  /* Close the radio after the listening window */
+static void end_listening(struct rtimer *t, void *ptr){
   NETSTACK_RADIO.off();
 
   if(link_state == LINK_SEARCHING){
-      /* No good link yet – retry after a sleep slot */
-      rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0,
-                 send_request, NULL);
+      // Didn't receive any REQ_ACK packets – sleep and schedule next send request
+      rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0, send_request, NULL);
   } else if(link_state == LINK_UP){
-      /* Good link established during this window – start data phase */
-      rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
-                 send_chunks, NULL);
+      // Discoverd a neighbour – start sending chunks
+      rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0, send_chunks, NULL);
   }
 }
 
-/* ------------ sampling timer ------------ */
 static void timer_callback(struct rtimer *t, void *ptr){
-  light_buf[sample_idx]  = get_light_reading();
-  motion_buf[sample_idx] = (int)get_mpu_reading();
-  printf("COLLECTING DATA: Sample %u  light=%d  mpu=%d\n",
-         sample_idx, light_buf[sample_idx], motion_buf[sample_idx]);
+  light_readings[sample_idx] = get_light_reading();
+  motion_readings[sample_idx] = (int)get_mpu_reading();
+  printf("COLLECTING DATA: Sample %u light=%d mpu=%d\n", sample_idx, light_readings[sample_idx], motion_readings[sample_idx]);
   sample_idx++;
 
   if(sample_idx < SAMPLES){
-    rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0,
-               timer_callback, NULL);
+    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, timer_callback, NULL);
   } else {
-    /* readings done – start link test */
-    curr_chunk  = 0;
-    link_state  = LINK_SEARCHING;
-    peer_set    = 0;
-    good_cnt    = 0;
-    rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0,
-               send_request, NULL);
+    curr_chunk = 0;
+    link_state = LINK_SEARCHING;
+    peer_set = 0;
+    good_cnt = 0;
+    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, send_request, NULL);
   }
 }
 
-/* ------------ RX callback ------------ */
-static void receive_cb(const void *data, uint16_t len,
-                       const linkaddr_t *src, const linkaddr_t *dest){
-  if(!len) return;
+static void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest){
+  if(len == 0) {
+    return;
+  }
   uint8_t type = ((const uint8_t*)data)[0];
 
   if(type == PKT_REQ_ACK) {
@@ -175,13 +169,12 @@ static void receive_cb(const void *data, uint16_t len,
         good_cnt = 0;
     }
 
-    printf("%lu DETECT node %u  REQ_ACK cnt=%u  rssi=%d\n",
-            clock_seconds(), sender_id, good_cnt, rssi);
+    printf("%lu DETECT node %u REQ_ACK cnt=%u rssi=%d\n", clock_seconds(), sender_id, good_cnt, rssi);
 
     if(good_cnt >= 3 && link_state == LINK_SEARCHING){
         link_state = LINK_UP;
-        printf("LINK UP: start data transfer\n\n");
-        /* first chunk is scheduled by listen_window_end() */
+        printf("Establishing good connection with neighbour - starting data transfer\n\n");
+        // first chunk will be scheduled by end_listening()
     }
   } else if(type == PKT_ACK) {
     ack_pkt_t *ack = (ack_pkt_t *)data;
@@ -189,18 +182,17 @@ static void receive_cb(const void *data, uint16_t len,
     signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
 
     if(ackseq == last_sent_seq){
-      awaiting_ack = 0;          /* ACK heard within listening window */
+      awaiting_ack = 0;
     }
 
     if(ackseq == curr_chunk) {
       uint16_t sender_id = ack->src_id;
-      printf("%lu DETECT node %u  PKT_ACK seq=%u  rssi=%d\n",
-        clock_seconds(), sender_id, curr_chunk, rssi);
+      printf("%lu DETECT node %u  PKT_ACK seq=%u  rssi=%d\n", clock_seconds(), sender_id, curr_chunk, rssi);
 
       if((curr_chunk + 1)*CHUNK_SIZE >= SAMPLES){
         printf("Transfer complete\n");
-        memset(light_buf, 0, sizeof(light_buf));
-        memset(motion_buf,0, sizeof(motion_buf));
+        memset(light_readings, 0, sizeof(light_readings));
+        memset(motion_readings,0, sizeof(motion_readings));
         sample_idx = 0;
         peer_set   = 0;
         good_cnt   = 0;
@@ -212,62 +204,52 @@ static void receive_cb(const void *data, uint16_t len,
   }
 }
 
-/* ------------ chunk sender ------------ */
 static void send_chunks(struct rtimer *t, void *ptr) {
   if(link_state != LINK_UP || curr_chunk == -1){
-    return;                                   /* nothing to do */
+    return;
   }
   // printf in the format: <timestamp_in_seconds> TRANSFER <nodeID>
   printf("%lu TRANSFER-FROM %u\n", clock_seconds(), node_id);
 
-  last_sent_seq  = curr_chunk;
-  awaiting_ack   = 1;
+  last_sent_seq = curr_chunk;
+  awaiting_ack = 1;
 
-  data_packet.type   = PKT_DATA;
+  data_packet.type = PKT_DATA;
   data_packet.src_id = node_id;
-  data_packet.seq    = curr_chunk;
+  data_packet.seq = curr_chunk;
   for(uint8_t i=0;i<CHUNK_SIZE;i++){
     uint8_t idx = curr_chunk*CHUNK_SIZE + i;
-    data_packet.payload[2*i]     = light_buf[idx];
-    data_packet.payload[2*i +1 ] = motion_buf[idx];
+    data_packet.payload[2*i] = light_readings[idx];
+    data_packet.payload[2*i +1 ] = motion_readings[idx];
   }
   nullnet_buf = (uint8_t*)&data_packet;
   nullnet_len = sizeof(data_packet);
   NETSTACK_NETWORK.output(&peer);
 
-  /* keep the radio on to listen for ACKs */
   NETSTACK_RADIO.on();
 
-  /* close listening window in WAKE_TIME */
-  rtimer_set(t, RTIMER_NOW() + WAKE_TIME, 0,
-             chunk_listen_end, NULL);
+  rtimer_set(t, RTIMER_NOW() + WAKE_TIME, 0, listen_chunk_ack, NULL);
 }
 
-/* ------------ end of ACK listening window ------------ */
-static void chunk_listen_end(struct rtimer *t, void *ptr){
+static void listen_chunk_ack(struct rtimer *t, void *ptr){
   NETSTACK_RADIO.off();
 
   if(link_state != LINK_UP) return;
 
   if(awaiting_ack){
-    /* no ACK – retry same chunk after a short sleep */
-    rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0,
-               send_chunks, NULL);
+    rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0, send_chunks, NULL);
   }else if(curr_chunk != -1){
-    /* ACK received – next chunk (or finished) */
-    rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
-               send_chunks, NULL);
+    rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0, send_chunks, NULL);
   }
 }
 
-/* ------------ Contiki process ------------ */
+
 PROCESS_THREAD(process_rtimer, ev, data){
   PROCESS_BEGIN();
   init_opt_reading();
   init_mpu_reading();
   nullnet_set_input_callback(receive_cb);
 
-  rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0,
-             timer_callback, NULL);
+  rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, timer_callback, NULL);
   PROCESS_END();
 }
