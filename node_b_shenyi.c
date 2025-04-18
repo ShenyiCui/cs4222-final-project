@@ -16,14 +16,16 @@
 #define PKT_DATA    0x03
 #define PKT_ACK     0x04
 
-#define BEACON_PERIOD (CLOCK_SECOND / 2)
+#define BEACON_PERIOD (CLOCK_SECOND / 5) // 200ms
 
 // Global variables
 static uint8_t chunks_rx = 0;
 static uint8_t beacon_byte = PKT_BEACON;
 static int16_t light_buf[SAMPLES];
 static int16_t motion_buf[SAMPLES];
-static struct etimer beacon_timer;
+// static struct etimer beacon_timer;
+
+static struct rtimer rt __attribute__((unused));
 
 typedef struct __attribute__((packed)) {
   uint8_t  type;
@@ -44,14 +46,11 @@ static void send_ack(const linkaddr_t *dest, uint8_t seq) {
   NETSTACK_NETWORK.output(dest);
 } 
 
-static void send_beacon(void) {
-  NETSTACK_RADIO.on();
-  // send a beacon packet 20 times
-  // for (int i = 0; i < 50; i++) {
-  nullnet_buf  = &beacon_byte;
-  nullnet_len  = 1;
+static void send_beacon(struct rtimer *t, void *ptr){
+  nullnet_buf=&beacon_byte;
+  nullnet_len=1;
   NETSTACK_NETWORK.output(NULL);
-  // }
+  rtimer_set(t, RTIMER_NOW() + BEACON_PERIOD, 1, (rtimer_callback_t)send_beacon, NULL);
 }
 
 /* input */
@@ -87,15 +86,11 @@ AUTOSTART_PROCESSES(&node_b_proc);
 
 PROCESS_THREAD(node_b_proc, ev, data){
   PROCESS_BEGIN();
-  nullnet_set_input_callback(node_b_rx);
-  
-  etimer_set(&beacon_timer, BEACON_PERIOD);
+  nullnet_set_input_callback(node_b_callback);
 
-  while(1){ 
-    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&beacon_timer));
-    send_beacon();
-    etimer_reset(&beacon_timer);
-  } 
+  rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1,
+             (rtimer_callback_t)send_beacon, NULL);
+
 
   PROCESS_END();
 }
