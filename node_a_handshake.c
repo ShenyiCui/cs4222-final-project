@@ -72,6 +72,8 @@ static int total_rssi = 0; // Total RSSI of all REQ_ACK packets
 static int peer_set = 0;
 static linkaddr_t peer;
 
+static int curr_chunk_tries = 0; // No. of tries to send a chunk
+
 static int awaiting_ack = 0; 
 static int last_sent_seq = -1; 
 
@@ -118,7 +120,7 @@ static void send_request(struct rtimer *t, void *ptr){
 
   send_req_cycle = (send_req_cycle + 1) % 5;
 
-  if (send_req_cycle == 0) {
+  if (send_req_cycle == 0 && peer_set == 0) {
     // Each send and listen cycle lasts 1/5 second, so every 5 cycles we refresh the samples
     int16_t light = get_light_reading();
     int16_t motion = (int)get_mpu_reading();
@@ -223,6 +225,7 @@ static void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, co
         send_req_cycle = 0;
       }else{
         curr_chunk++;
+        curr_chunk_tries = 0;
       }
     }
   }
@@ -248,6 +251,8 @@ static void send_chunks(struct rtimer *t, void *ptr) {
   nullnet_buf = (uint8_t*)&data_packet;
   nullnet_len = sizeof(data_packet);
   NETSTACK_NETWORK.output(&peer);
+  curr_chunk_tries++;
+
 
   NETSTACK_RADIO.on();
 
@@ -260,7 +265,16 @@ static void listen_chunk_ack(struct rtimer *t, void *ptr){
   if(link_state != LINK_UP) return;
 
   if(awaiting_ack){
-    rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0, send_chunks, NULL);
+    if (curr_chunk_tries > MAX_CHUNK_TRIES) {
+      printf("Failed to send chunk %d after %d tries - Disconnecting\n", curr_chunk, curr_chunk_tries);
+      curr_chunk_tries = 0;
+      link_state = LINK_SEARCHING;
+      good_cnt = 0;
+      total_rssi = 0;
+      rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0, send_request, NULL);
+    } else {
+      rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0, send_chunks, NULL);
+    }
   }else if(curr_chunk != -1){
     rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0, send_chunks, NULL);
   } else {
