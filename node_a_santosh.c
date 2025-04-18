@@ -79,7 +79,7 @@ void timer_callback(struct rtimer *t, void *ptr) {
 
   // Print the Light readings
   printf("Sample no. %d\n", sample_idx);
-  printf("Light = %d.%02d\n", (int)light, (int)(light * 100) % 100);
+  printf("Light = %d.%02d\n", (int)light);
   // Print the MPU readings
   printf("MPU = %d.%02d\n", (int)mpu, (int)(mpu * 100) % 100);
 
