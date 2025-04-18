@@ -66,7 +66,6 @@ static uint8_t sample_idx = 0;
 static int curr_chunk = 0;
 
 static uint8_t good_cnt = 0; // No. of consecutive REQ_ACK packets with good RSSI
-static uint8_t curr_chunk_tries = 0;
 #define RSSI_GOOD_THRESHOLD (-70)
 static int peer_set = 0;
 static linkaddr_t peer;
@@ -84,6 +83,15 @@ static void init_opt_reading(void) {
 }
 static void init_mpu_reading(void){ 
   mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL); 
+}
+
+static void enqueue(int16_t light, int16_t motion){
+  for (int i = 0; i < SAMPLES - 1; i++) {
+      light_readings[i] = light_readings[i + 1];
+      motion_readings[i] = motion_readings[i + 1];
+  }
+  light_readings[SAMPLES - 1] = light;
+  motion_readings[SAMPLES - 1] = motion;
 }
 
 static int get_light_reading(void){
@@ -129,20 +137,33 @@ static void end_listening(struct rtimer *t, void *ptr){
   }
 }
 
-static void timer_callback(struct rtimer *t, void *ptr){
-  light_readings[sample_idx] = get_light_reading();
-  motion_readings[sample_idx] = (int)get_mpu_reading();
-  printf("COLLECTING DATA: Sample %u light=%d mpu=%d\n", sample_idx, light_readings[sample_idx], motion_readings[sample_idx]);
-  sample_idx++;
+static void get_readings(struct rtimer *t, void *ptr){
+  if (link_state == LINK_UP) {
+    return;
+  }
 
-  if(sample_idx < SAMPLES){
-    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, timer_callback, NULL);
+  int16_t light = get_light_reading();
+  int16_t motion = (int)get_mpu_reading();
+  printf("COLLECTING DATA: Sample %u light=%d mpu=%d\n", sample_idx, light, motion);
+
+  if (sample_idx >= SAMPLES) {
+    enqueue(light, motion);
   } else {
+    light_readings[sample_idx] = light;
+    motion_readings[sample_idx] = motion;
+    sample_idx++;
+  }
+
+  if (sample_idx == SAMPLES) {
     curr_chunk = 0;
     link_state = LINK_SEARCHING;
     peer_set = 0;
     good_cnt = 0;
-    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, send_request, NULL);
+    sample_idx++;
+    rtimer_set(&rt, RTIMER_NOW() + SLEEP_SLOT, 0, send_request, NULL);
+    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
+  } else {
+    rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
   }
 }
 
@@ -209,7 +230,7 @@ static void send_chunks(struct rtimer *t, void *ptr) {
     return;
   }
   // printf in the format: <timestamp_in_seconds> TRANSFER <nodeID>
-  printf("%lu TRANSFER-FROM %u\n", clock_seconds(), node_id);
+  printf("%lu TRANSFER %u\n", clock_seconds(), node_id);
 
   last_sent_seq = curr_chunk;
   awaiting_ack = 1;
@@ -250,6 +271,6 @@ PROCESS_THREAD(process_rtimer, ev, data){
   init_mpu_reading();
   nullnet_set_input_callback(receive_cb);
 
-  rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, timer_callback, NULL);
+  rtimer_set(&rt, RTIMER_NOW() + sampling_interval, 0, get_readings, NULL);
   PROCESS_END();
 }
