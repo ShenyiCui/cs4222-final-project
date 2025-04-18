@@ -1,4 +1,4 @@
-CONTIKI_PROJECT = nbr backhauler_receiver
+CONTIKI_PROJECT = nbr node_a_santosh node_b_shenyi
 all: $(CONTIKI_PROJECT)
 
 CONTIKI = ../..

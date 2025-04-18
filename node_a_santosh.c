@@ -40,6 +40,14 @@ typedef struct __attribute__((packed)) {
     int16_t  payload[CHUNK_SIZE*2];
   } data_pkt_t;
 
+  typedef struct {
+    uint8_t  type;
+    uint8_t  seq;
+    int16_t  payload[CHUNK_SIZE*2]; // light,motion interleaved
+  } data_packet_struct;
+
+  static data_packet_struct data_packet;
+
 // Function declarations
 static void init_opt_reading(void);
 static void init_mpu_reading(void);
@@ -79,13 +87,15 @@ void timer_callback(struct rtimer *t, void *ptr) {
 
   // Print the Light readings
   printf("Sample no. %d\n", sample_idx);
-  printf("Light = %d.%02d\n", (int)light);
+  printf("Light = %d\n", (int)light);
   // Print the MPU readings
-  printf("MPU = %d.%02d\n", (int)mpu, (int)(mpu * 100) % 100);
+  printf("MPU = %d\n", (int)mpu);
 
   light_buf[sample_idx] = (int) light;
-  motion_buf[sample_idx] = mpu;
-    sample_idx++;
+  motion_buf[sample_idx] = (int) mpu;
+  printf("Light = %d\n", light_buf[sample_idx]);
+  printf("MPU = %d\n", motion_buf[sample_idx]);
+  sample_idx++;
   
   // Schedule the next callback after 250ms.
   if (sample_idx < SAMPLES) {
@@ -99,7 +109,8 @@ void timer_callback(struct rtimer *t, void *ptr) {
 void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest) {
     // Wait for a PKT_BEACON packet and get RSSI
     // If RSSI is good for 3 consecutive packets, set peer_set to 1
-    if(len<1) return;
+    if(len != sizeof(data_packet_struct)) return;
+    static data_packet_struct pkt; memcpy(&pkt,data,len);
 
     uint8_t type = ((uint8_t*)data)[0];
 
@@ -121,17 +132,16 @@ void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const lin
 
 void send_chunks(struct rtimer *t, void *ptr) {
     if (peer_set && good_cnt > 2) {
-        data_pkt_t *pkt = (data_pkt_t *)ptr;
-        pkt->type = PKT_DATA;
-        pkt->seq = curr_chunk;
+        data_packet.type = PKT_DATA;
+        data_packet.seq = curr_chunk;
         for(uint8_t i=0; i<CHUNK_SIZE; i++){
             uint8_t idx = curr_chunk*CHUNK_SIZE + i;
-            pkt->payload[2*i] = light_buf[idx];
-            pkt->payload[2*i+1] = motion_buf[idx];
-            printf("Sending chunk %d, sample %d: light %d, motion %d\n", curr_chunk, idx, pkt->payload[2*i], pkt->payload[2*i+1]);
+            data_packet.payload[2*i] = light_buf[idx];
+            data_packet.payload[2*i+1] = motion_buf[idx];
+            printf("Sending chunk %d, sample %d: light %d, motion %d\n", curr_chunk, idx, data_packet.payload[2*i], data_packet.payload[2*i+1]);
         }
-        nullnet_buf = (uint8_t *)pkt;
-        nullnet_len = sizeof(data_pkt_t);
+        nullnet_buf = (uint8_t *)&data_packet;
+        nullnet_len = sizeof(data_packet);
         printf("Sending chunk %d\n", curr_chunk);
         NETSTACK_NETWORK.output(&peer);
     } 
