@@ -102,6 +102,7 @@ void timer_callback(struct rtimer *t, void *ptr) {
       rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
   } else {
     // Send the chunk
+    curr_chunk = 0;
     rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, send_chunks, NULL);
   }
 }
@@ -125,20 +126,31 @@ void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const lin
         uint8_t ackseq=((uint8_t*)data)[1];
         if(ackseq==curr_chunk){
             printf("ACK received for seq %d\n", ackseq);
-            curr_chunk++;
+            if (curr_chunk*CHUNK_SIZE>=SAMPLES){
+                // Transfer complete
+                printf("Transfer complete\n");
+                memset(light_buf, 0, sizeof(light_buf));
+                memset(motion_buf, 0, sizeof(motion_buf));
+                sample_idx = 0; 
+                peer_set = 0; 
+                good_cnt = 0;
+                curr_chunk = -1;
+            } else {
+                curr_chunk++;
+            }
         }
     }
 }
 
 void send_chunks(struct rtimer *t, void *ptr) {
-    if (peer_set && good_cnt > 2) {
+    if (peer_set && good_cnt > 2 && curr_chunk != -1) {
         data_packet.type = PKT_DATA;
         data_packet.seq = curr_chunk;
         for(uint8_t i=0; i<CHUNK_SIZE; i++){
             uint8_t idx = curr_chunk*CHUNK_SIZE + i;
             data_packet.payload[2*i] = light_buf[idx];
             data_packet.payload[2*i+1] = motion_buf[idx];
-            printf("Actual buffer values: light %d, motion %d\n", light_buf[idx], motion_buf[idx]);
+            printf("Actual buffer values: idx_value %d, light %d, motion %d\n", idx, light_buf[idx], motion_buf[idx]);
             printf("Sending chunk %d, sample %d: light %d, motion %d\n", curr_chunk, idx, data_packet.payload[2*i], data_packet.payload[2*i+1]);
         }
         nullnet_buf = (uint8_t *)&data_packet;
