@@ -24,7 +24,6 @@ AUTOSTART_PROCESSES(&process_rtimer);
 
 /* ------------ packet types ------------ */
 #define PKT_BEACON   0x01
-#define PKT_REQUEST  0x02   // start transfer
 #define PKT_DATA     0x03   // sensor chunk
 #define PKT_ACK      0x04   // ack each chunk
 
@@ -85,7 +84,7 @@ void timer_callback(struct rtimer *t, void *ptr) {
   printf("MPU = %d.%02d\n", (int)mpu, (int)(mpu * 100) % 100);
 
   light_buf[sample_idx] = light;
-  motion_buf[sample_idx] = (int16_t)mpu;
+  motion_buf[sample_idx] = mpu;
     sample_idx++;
   
   // Schedule the next callback after 250ms.
@@ -129,6 +128,7 @@ void send_chunks(struct rtimer *t, void *ptr) {
             uint8_t idx = curr_chunk*CHUNK_SIZE + i;
             pkt->payload[2*i] = light_buf[idx];
             pkt->payload[2*i+1] = motion_buf[idx];
+            printf("Sending chunk %d, sample %d: light %d, motion %d\n", curr_chunk, idx, pkt->payload[2*i], pkt->payload[2*i+1]);
         }
         nullnet_buf = (uint8_t *)pkt;
         nullnet_len = sizeof(data_pkt_t);
