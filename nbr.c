@@ -26,6 +26,7 @@
 #define WAKE_TIME RTIMER_SECOND/10    // 10 Hz, 0.1 s
 #define SLEEP_CYCLE  4                // Default value (used when not in aggressive mode)
 #define SLEEP_SLOT RTIMER_SECOND/10   // 0.1 s
+#define FLAG_ACK 0x01    // dedicated ACK flag carried in every packet
 
 // Use broadcast address for neighbour discovery:
 linkaddr_t dest_addr;
@@ -33,6 +34,12 @@ linkaddr_t dest_addr;
 
 // In low mode we choose a somewhat conservative (power–saving) sleep count.
 #define LOW_SLEEP_COUNT  (2 * SLEEP_CYCLE)  // Adjust as needed for power saving
+
+// Mode definitions
+#define MODE_NORMAL      0   // low duty cycle discovery
+#define MODE_AGGRESSIVE  1   // high‑rate beaconing until ACK seen or 10 s passes
+#define MODE_ACK         2   // later device: aggressive beacons with FLAG_ACK for ~2 s
+#define MODE_COMPLETE    3   // discovery finished; radio off
 
 /*---------------------------------------------------------------------------*/
 // Data packet now carries a phase field:
@@ -42,6 +49,7 @@ typedef struct {
   unsigned long timestamp;
   unsigned long seq;
   uint8_t phase;
+  uint8_t flags;   // bit‑flags; FLAG_ACK indicates an ACK beacon
 } data_packet_struct;
 
 /*---------------------------------------------------------------------------*/
@@ -52,10 +60,10 @@ static data_packet_struct data_packet;
 unsigned long curr_timestamp;
 
 // Global variables for managing mode:
-// mode 0: low duty cycle, mode 1: aggressive, mode 2: discovery complete (sleep)
-static uint8_t mode = 0;
 // Record the start time when switching to aggressive mode.
+static uint8_t mode = 0;
 static unsigned long aggressive_start_time = 0;
+static unsigned long ack_start_time = 0;   // when we entered MODE_ACK
 
 /*---------------------------------------------------------------------------*/
 // Process declaration.
@@ -65,30 +73,31 @@ PROCESS(nbr_discovery_process, "cc2650 neighbour discovery process");
 // Receive callback: process incoming discovery packets.
 void receive_packet_callback(const void *data, uint16_t len,
                              const linkaddr_t *src, const linkaddr_t *dest) {
-  printf("Received packet from %d.%d to %d.%d\n",
-         src->u8[0], src->u8[1], dest->u8[0], dest->u8[1]);
-  if(len == sizeof(data_packet_struct)) {
-    static data_packet_struct received_packet;
-    memcpy(&received_packet, data, len);
-    
-    printf("Received neighbour discovery packet %lu with rssi %d from %ld, phase %d\n",
-           received_packet.seq,
-           (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI),
-           received_packet.src_id,
-           received_packet.phase);
-    
-    // If the packet is from a different node:
-      if(mode == 0) {
-        // Not yet in aggressive mode: switch to phase 1.
-        mode = 1;
-        aggressive_start_time = clock_time();
-        printf("Switching to aggressive mode at %lu ticks\n", aggressive_start_time);
-      } else if(mode == 1 && received_packet.phase == 1) {
-        // Two-way discovery has been confirmed by the partner,
-        // but remain in aggressive mode for the full 10-second window.
-        printf("Two-way discovery confirmed from partner at %lu ticks. Remaining in aggressive mode until 10 seconds elapse.\n", clock_time());
-      }
+  if(len != sizeof(data_packet_struct)) return;   // ignore wrong size
+
+  static data_packet_struct pkt;
+  memcpy(&pkt, data, len);
+
+  printf("RX seq %lu  from %lu  phase %u  flags 0x%02X\n",
+         pkt.seq, pkt.src_id, pkt.phase, pkt.flags);
+
+  // === handshake state‑machine ===
+  if(mode == MODE_NORMAL) {
+    /*  First contact: I become the earlier device => AGGRESSIVE. */
+    mode = MODE_AGGRESSIVE;
+    aggressive_start_time = clock_time();
+    printf("-> MODE_AGGRESSIVE (start)\n");
+  } else if(mode == MODE_AGGRESSIVE) {
+    if(pkt.flags & FLAG_ACK) {
+      /* partner acknowledges => we are done */
+      mode = MODE_COMPLETE;
+      printf("ACK received -> MODE_COMPLETE\n");
     }
+  } else if(mode == MODE_ACK) {
+    if(pkt.phase == MODE_AGGRESSIVE && !(pkt.flags & FLAG_ACK)) {
+      /* extra safety: early device still aggressive; that's fine */
+    }
+  }
 }
 
 /*---------------------------------------------------------------------------*/
@@ -108,7 +117,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
 
   while(1) {
     // If discovery is complete (phase 2), stop transmissions.
-    if(mode == 2) {
+    if(mode == MODE_COMPLETE) {
       printf("Discovery complete, stopping transmissions and entering sleep mode.\n");
       NETSTACK_RADIO.off();
       PT_EXIT(&pt);
@@ -117,8 +126,14 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
     // Turn the radio on before transmitting.
     NETSTACK_RADIO.on();
     
-    // Set the data packet's phase field to current mode.
-    data_packet.phase = mode;
+    /* Populate current beacon header */
+    if(mode == MODE_ACK) {
+      data_packet.flags = FLAG_ACK;
+      data_packet.phase = MODE_AGGRESSIVE;   // still aggressive timing
+    } else {
+      data_packet.flags = 0;
+      data_packet.phase = (mode == MODE_AGGRESSIVE) ? MODE_AGGRESSIVE : MODE_NORMAL;
+    }
     
     // Transmit the discovery beacons.
     for(i = 0; i < NUM_SEND; i++) {
@@ -150,16 +165,20 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
     
     current = clock_time();
     
-    if(mode == 1) {
-      // In aggressive mode, use minimal sleep (1 slot) until 10 seconds have passed
-      if((current - aggressive_start_time) < (10 * CLOCK_SECOND)) {
-        sleep_count = 1;
-      } else {
-        // Aggressive phase is over: transition to phase 2 (discovery complete) and stop transmitting.
-        mode = 2;
-        printf("Aggressive window expired. Transitioning to sleep mode.\n");
+    if(mode == MODE_AGGRESSIVE) {
+      sleep_count = 1;
+      if(current - aggressive_start_time >= 10 * CLOCK_SECOND) {
+        /* 10‑s safety: drop back to NORMAL to conserve power */
+        mode = MODE_NORMAL;
+        printf("10 s aggressive timeout -> MODE_NORMAL\n");
       }
-    } else {  // mode == 0: low duty cycle mode.
+    } else if(mode == MODE_ACK) {
+      sleep_count = 1;
+      if(current - ack_start_time >= 2 * CLOCK_SECOND) {
+        mode = MODE_COMPLETE;
+        printf("ACK period done -> MODE_COMPLETE\n");
+      }
+    } else if(mode == MODE_NORMAL) {
       sleep_count = LOW_SLEEP_COUNT;
     }
     
