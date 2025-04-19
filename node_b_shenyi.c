@@ -4,7 +4,6 @@
 #include <math.h>
 #include <string.h>
 #include "contiki.h"
-#include "sys/rtimer.h"
 #include "net/nullnet/nullnet.h"
 #include "net/netstack.h"
 #include "net/packetbuf.h"
@@ -17,16 +16,14 @@
 #define PKT_DATA    0x03
 #define PKT_ACK     0x04
 
-PROCESS(process_rtimer, "RTimer");
-AUTOSTART_PROCESSES(&process_rtimer);
+#define BEACON_PERIOD (2*CLOCK_SECOND)
 
 // Global variables
 static uint8_t chunks_rx = 0;
-static struct rtimer timer_rtimer;
-static rtimer_clock_t interval = RTIMER_SECOND / 4;
 static uint8_t beacon_byte = PKT_BEACON;
 static int16_t light_buf[SAMPLES];
 static int16_t motion_buf[SAMPLES];
+static struct etimer beacon_timer;
 
 typedef struct __attribute__((packed)) {
   uint8_t  type;
@@ -81,20 +78,19 @@ static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *sr
   // }
 }
 
-/* 
- * timer_callback() is invoked every 250ms.
- * It both polls sensors and advances the state machine.
- */
-void timer_callback(struct rtimer *t, void *ptr) {
-  send_beacon();
-  rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
-}
+PROCESS(node_b_proc,"Node B RX");
+AUTOSTART_PROCESSES(&node_b_proc);
 
-PROCESS_THREAD(process_rtimer, ev, data) {
-    PROCESS_BEGIN();
-    nullnet_set_input_callback(node_b_callback);
-    // Start the periodic callback (every 250 ms)
-    rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
+PROCESS_THREAD(node_b_proc, ev, data){
+  PROCESS_BEGIN();
+  nullnet_set_input_callback(node_b_callback);
+  etimer_set(&beacon_timer, BEACON_PERIOD);
 
-    PROCESS_END();
+  while(1){ 
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&beacon_timer));
+    send_beacon();
+    etimer_reset(&beacon_timer);
+  } 
+
+  PROCESS_END();
 }
