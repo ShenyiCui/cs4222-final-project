@@ -23,7 +23,7 @@ AUTOSTART_PROCESSES(&process_rtimer);
 // Global variables
 static uint8_t chunks_rx = 0;
 static struct rtimer timer_rtimer;
-static rtimer_clock_t interval = RTIMER_SECOND / 4;
+static rtimer_clock_t interval = RTIMER_SECOND * 2; // Increased beacon interval
 static uint8_t beacon_byte = PKT_BEACON;
 static int16_t light_buf[SAMPLES];
 static int16_t motion_buf[SAMPLES];
@@ -33,12 +33,6 @@ typedef struct __attribute__((packed)) {
   uint8_t  seq;
   int16_t  payload[CHUNK_SIZE*2];
 } data_pkt_t;
-
-typedef struct {
-  uint8_t  type;
-  uint8_t  seq;
-  int16_t  payload[CHUNK_SIZE*2]; // light,motion interleaved
-} data_packet_struct;
 
 static void send_ack(const linkaddr_t *dest, uint8_t seq) { 
   uint8_t ack[2]={PKT_ACK, seq};
@@ -55,17 +49,18 @@ static void send_beacon(void){
 
 /* input */
 static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest){
-  // if(len != sizeof(data_packet_struct)) return;
-  static data_packet_struct pkt; memcpy(&pkt,data,len);
-
-  // uint8_t type = ((uint8_t*)data)[0];
-
-  // Print Recieved a Packet
-  printf("%lu RX %02x:%02x RSSI: %d\n", clock_seconds(), src->u8[0], src->u8[1], (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
-
-  // printf("Packet Type: %d\n", type);
+  const uint8_t *bytes = (const uint8_t *)data;
+  // Only handle PKT_DATA of the correct length
+  if(len != sizeof(data_pkt_t) || bytes[0] != PKT_DATA) {
+    return;
+  }
   
-  // if(type == PKT_DATA) {
+  data_pkt_t pkt; 
+  memcpy(&pkt, data, len);
+
+  // Print Received a Packet
+  printf("%lu RX %02x:%02x RSSI: %d\n", clock_seconds(), src->u8[0], src->u8[1], (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
+  
   printf("Received packet from %u\n", src->u8[7]);
   printf("Received chunk %d\n", pkt.seq);
 
@@ -78,22 +73,23 @@ static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *sr
 
   send_ack(src, pkt.seq);
   chunks_rx++;
-  // }
 }
 
 /* 
- * timer_callback() is invoked every 250ms.
- * It both polls sensors and advances the state machine.
+ * timer_callback() is invoked every 2 seconds.
  */
 void timer_callback(struct rtimer *t, void *ptr) {
-  send_beacon();
+  if(!chunks_rx) { // Assuming chunks_rx indicates if data is being received
+    send_beacon();
+  }
+  // schedule next
   rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
 }
 
 PROCESS_THREAD(process_rtimer, ev, data) {
     PROCESS_BEGIN();
     nullnet_set_input_callback(node_b_callback);
-    // Start the periodic callback (every 250 ms)
+    // Start the periodic callback
     rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
 
     PROCESS_END();
