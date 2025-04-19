@@ -16,6 +16,12 @@
 
 #define SAMPLES     60
 #define CHUNK_SIZE  20
+/* same layout used by Node A (type, seq, payload[CHUNK_SIZE*2]) */
+typedef struct __attribute__((packed)) {
+  uint8_t  type;
+  uint8_t  seq;
+  int16_t  payload[CHUNK_SIZE*2];
+} data_pkt_t;
 #define BEACON_PERIOD (2*CLOCK_SECOND)
 
 static int16_t light_buf[SAMPLES];
