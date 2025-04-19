@@ -10,7 +10,7 @@
 #include "net/packetbuf.h"
 
 
-#define SAMPLES     20
+#define SAMPLES     60
 #define CHUNK_SIZE  20
 
 #define PKT_BEACON  0x01
@@ -52,32 +52,32 @@ static void send_beacon(void){
 static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest){
   if(len < 1) return;
 
-  uint8_t type = ((uint8_t*)data)[0];
+  // uint8_t type = ((uint8_t*)data)[0];
 
   // Print Recieved a Packet
   printf("%lu RX %02x:%02x RSSI: %d\n", clock_seconds(), src->u8[0], src->u8[1], (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
 
-  printf("Packet Type: %d\n", type);
+  // printf("Packet Type: %d\n", type);
   
-  if(type == PKT_DATA) {
-    const data_pkt_t *p = data;
-    printf("Received packet from %u\n", src->u8[7]);
+  // if(type == PKT_DATA) {
+  const data_pkt_t *p = data;
+  printf("Received packet from %u\n", src->u8[7]);
 
-    for(uint8_t i=0;i<CHUNK_SIZE;i++){
-      uint8_t idx = p->seq * CHUNK_SIZE + i;
-      light_buf[idx] = p->payload[2*i];
-      motion_buf[idx] = p->payload[2*i+1];
-    }
-
-    send_ack(src, p -> seq);
-    chunks_rx++;
-
-    if(chunks_rx * CHUNK_SIZE >= SAMPLES){
-      printf("Light:"); for(uint8_t i=0; i < SAMPLES; i++) printf(i?", %d":" %d", light_buf[i]);
-      printf("\nMotion:"); for(uint8_t i=0; i < SAMPLES; i++) printf(i?", %d":" %d", motion_buf[i]); printf("\n");
-      peer_set=0;
-    }
+  for(uint8_t i=0;i<CHUNK_SIZE;i++){
+    uint8_t idx = p->seq * CHUNK_SIZE + i;
+    light_buf[idx] = p->payload[2*i];
+    motion_buf[idx] = p->payload[2*i+1];
   }
+
+  send_ack(src, p -> seq);
+  chunks_rx++;
+
+  if(chunks_rx * CHUNK_SIZE >= SAMPLES){
+    printf("Light:"); for(uint8_t i=0; i < SAMPLES; i++) printf(i?", %d":" %d", light_buf[i]);
+    printf("\nMotion:"); for(uint8_t i=0; i < SAMPLES; i++) printf(i?", %d":" %d", motion_buf[i]); printf("\n");
+    peer_set=0;
+  }
+  // }
 }
 
 /* 
