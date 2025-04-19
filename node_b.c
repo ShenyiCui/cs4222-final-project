@@ -32,7 +32,12 @@ static uint8_t peer_set=0;
 static uint8_t beacon_byte=PKT_BEACON;
 static struct etimer beacon_timer;
 
-static void send_beacon(void){ nullnet_buf=&beacon_byte; nullnet_len=1; NETSTACK_NETWORK.output(NULL); }
+static void send_beacon(void){
+  nullnet_buf=&beacon_byte;
+  nullnet_len=1;
+  NETSTACK_NETWORK.output(NULL);
+}
+
 static void send_ack(const linkaddr_t *dest,uint8_t seq){ uint8_t ack[2]={PKT_ACK,seq}; nullnet_buf=ack; nullnet_len=2; NETSTACK_NETWORK.output(dest);} 
 
 /* input */
@@ -62,5 +67,13 @@ AUTOSTART_PROCESSES(&node_b_proc);
 PROCESS_THREAD(node_b_proc,ev,data){
   PROCESS_BEGIN();
   nullnet_set_input_callback(rx_cb);
-  etimer_set(&beacon_timer,BEACON_PERIOD);
-  while(1){ PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&beacon_timer)); send_beacon(); etimer_reset(&beacon_timer);} PROCESS_END(); }
+  etimer_set(&beacon_timer, BEACON_PERIOD);
+
+  while(1){ 
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&beacon_timer));
+    send_beacon();
+    etimer_reset(&beacon_timer);
+  } 
+
+  PROCESS_END();
+}

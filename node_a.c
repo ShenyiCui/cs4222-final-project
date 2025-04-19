@@ -28,14 +28,12 @@
 /* ------------ sensor helpers (reuse Assignment‑2) ------------ */
 static void init_opt(void) { SENSORS_ACTIVATE(opt_3001_sensor);} 
 static void init_mpu(void) { mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL);} 
-static int  get_light(void) {
-  int v = opt_3001_sensor.value(0); if(v==CC26XX_SENSOR_READING_ERROR) return -1; return v/100; }
+
+static int get_light(void) { 
+  return 50;
+}
 static int16_t get_motion_scaled(void) {
-  int ax=mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_X)/100;
-  int ay=mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Y)/100;
-  int az=mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Z)/100;
-  float mag = sqrtf(ax*ax+ay*ay+az*az);
-  return (int16_t)(mag*100); // scale 0.01 g
+  return (int16_t) 50;
 }
 
 /* ------------ buffers ------------ */
@@ -63,8 +61,8 @@ static void start_transfer(void);
 static void send_chunk(uint8_t seq);
 
 /* ------------ input callback ------------ */
-static void rx_cb(const void *data,uint16_t len,const linkaddr_t *src,const linkaddr_t *dest){
-  if(len==1 && *(uint8_t*)data==PKT_BEACON) {
+static void rx_cb(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest) {
+  if(len==1 && *(uint8_t*) data == PKT_BEACON) {
     signed short rssi=(signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
     printf("%lu RX_BEACON %02x:%02x RSSI %d\n",clock_seconds(),src->u8[0],src->u8[1],rssi);
     if(rssi>=RSSI_THRESHOLD){
@@ -77,7 +75,8 @@ static void rx_cb(const void *data,uint16_t len,const linkaddr_t *src,const link
       uint8_t req=PKT_REQUEST; nullnet_buf=&req; nullnet_len=1; NETSTACK_NETWORK.output(&peer);
       start_transfer();
     }
-  } else if(len==2 && *(uint8_t*)data==PKT_ACK && sending){
+  
+  } else if(len==2 && *(uint8_t*)data==PKT_ACK && sending) {
     uint8_t ackseq=((uint8_t*)data)[1];
     if(ackseq==seq_idx){
       seq_idx++;
@@ -100,7 +99,9 @@ AUTOSTART_PROCESSES(&node_a_proc);
 
 PROCESS_THREAD(node_a_proc,ev,data){
   PROCESS_BEGIN();
-  init_opt(); init_mpu();
+  init_opt();
+  init_mpu();
+
   nullnet_set_input_callback(rx_cb);
 
   etimer_set(&sample_timer,SAMPLE_INTERVAL);
@@ -108,20 +109,30 @@ PROCESS_THREAD(node_a_proc,ev,data){
 
   while(1){
     PROCESS_WAIT_EVENT();
-    if(etimer_expired(&sample_timer)){
-      light_buf[sample_idx]=get_light();
-      motion_buf[sample_idx]=get_motion_scaled();
+    if(etimer_expired(&sample_timer)) {
+      light_buf[sample_idx] = get_light();
+      motion_buf[sample_idx] = get_motion_scaled();
       sample_idx++;
       if(sample_idx>=SAMPLES){ buffer_full=1; sample_idx=SAMPLES; }
       etimer_reset(&sample_timer);
     }
     if(etimer_expired(&beacon_timer) && !sending){ send_beacon(); etimer_reset(&beacon_timer);}  }
-  PROCESS_END();}
+  PROCESS_END();
+}
 
 /* ------------ helpers ------------ */
-static void send_beacon(void){ uint8_t b=PKT_BEACON; nullnet_buf=&b; nullnet_len=1; NETSTACK_NETWORK.output(NULL); printf("%lu BEACON_SENT\n",clock_seconds()); }
+static void send_beacon(void){ 
+  uint8_t b=PKT_BEACON; nullnet_buf=&b;
+  nullnet_len=1;
+  NETSTACK_NETWORK.output(NULL);
+  printf("%lu BEACON_SENT\n",clock_seconds());
+}
 
-static void start_transfer(void){ sending=1; seq_idx=0; send_chunk(0);} 
+static void start_transfer(void){ 
+  sending=1;
+  seq_idx=0;
+  send_chunk(0);
+} 
 
 static void send_chunk(uint8_t seq){
   dpkt.type=PKT_DATA; dpkt.seq=seq;
