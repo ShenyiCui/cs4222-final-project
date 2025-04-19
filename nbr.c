@@ -64,6 +64,7 @@ unsigned long curr_timestamp;
 static uint8_t mode = 0;
 static unsigned long aggressive_start_time = 0;
 static unsigned long ack_start_time = 0;   // when we entered MODE_ACK
+static uint8_t ack_started = 0;  // 0 = not yet, 1 = ACK window running
 
 /*---------------------------------------------------------------------------*/
 // Process declaration.
@@ -73,30 +74,38 @@ PROCESS(nbr_discovery_process, "cc2650 neighbour discovery process");
 // Receive callback: process incoming discovery packets.
 void receive_packet_callback(const void *data, uint16_t len,
                              const linkaddr_t *src, const linkaddr_t *dest) {
-  if(len != sizeof(data_packet_struct)) return;   // ignore wrong size
+  if(len != sizeof(data_packet_struct)) return;
+  static data_packet_struct pkt; memcpy(&pkt,data,len);
 
-  static data_packet_struct pkt;
-  memcpy(&pkt, data, len);
+  printf("RX seq %lu from %lu phase %u flags 0x%02X\n",pkt.seq,pkt.src_id,pkt.phase,pkt.flags);
 
-  printf("RX seq %lu  from %lu  phase %u  flags 0x%02X\n",
-         pkt.seq, pkt.src_id, pkt.phase, pkt.flags);
-
-  // === handshake state‑machine ===
-  if(mode == MODE_NORMAL) {
-    /*  First contact: I become the earlier device => AGGRESSIVE. */
-    mode = MODE_AGGRESSIVE;
-    aggressive_start_time = clock_time();
-    printf("-> MODE_AGGRESSIVE (start)\n");
-  } else if(mode == MODE_AGGRESSIVE) {
-    if(pkt.flags & FLAG_ACK) {
-      /* partner acknowledges => we are done */
-      mode = MODE_COMPLETE;
-      printf("ACK received -> MODE_COMPLETE\n");
-    }
-  } else if(mode == MODE_ACK) {
-    if(pkt.phase == MODE_AGGRESSIVE && !(pkt.flags & FLAG_ACK)) {
-      /* extra safety: early device still aggressive; that's fine */
-    }
+  switch(mode) {
+  case MODE_NORMAL:
+      /* first contact -> go aggressive */
+      mode = MODE_AGGRESSIVE;
+      aggressive_start_time = clock_time();
+      printf("MODE_NORMAL -> MODE_AGGRESSIVE\n");
+      break;
+  case MODE_AGGRESSIVE:
+      if(pkt.flags & FLAG_ACK) {
+          mode = MODE_COMPLETE;
+          printf("ACK seen -> MODE_COMPLETE\n");
+      } else if(!ack_started) {
+          /* peer still aggressive; become ACK sender */
+          mode = MODE_ACK;
+          ack_start_time = clock_time();
+          ack_started = 1;
+          printf("Start ACK window\n");
+      }
+      break;
+  case MODE_ACK:
+      if(pkt.flags & FLAG_ACK) {
+          mode = MODE_COMPLETE;
+          printf("Peer ACK => MODE_COMPLETE\n");
+      }
+      break;
+  default:
+      break;
   }
 }
 
@@ -129,10 +138,10 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
     /* Populate current beacon header */
     if(mode == MODE_ACK) {
       data_packet.flags = FLAG_ACK;
-      data_packet.phase = MODE_AGGRESSIVE;   // still aggressive timing
+      data_packet.phase = MODE_AGGRESSIVE;   // keep phase 1 identifier
     } else {
       data_packet.flags = 0;
-      data_packet.phase = (mode == MODE_AGGRESSIVE) ? MODE_AGGRESSIVE : MODE_NORMAL;
+      data_packet.phase = (mode==MODE_AGGRESSIVE)? MODE_AGGRESSIVE : MODE_NORMAL;
     }
     
     // Transmit the discovery beacons.
@@ -176,7 +185,8 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
       sleep_count = 1;
       if(current - ack_start_time >= 2 * CLOCK_SECOND) {
         mode = MODE_COMPLETE;
-        printf("ACK period done -> MODE_COMPLETE\n");
+        ack_started = 0;
+        printf("ACK window done -> MODE_COMPLETE\n");
       }
     } else if(mode == MODE_NORMAL) {
       sleep_count = LOW_SLEEP_COUNT;
