@@ -21,7 +21,6 @@ PROCESS(process_rtimer, "RTimer");
 AUTOSTART_PROCESSES(&process_rtimer);
 
 // Global variables
-static uint8_t peer_set = 0;
 static uint8_t chunks_rx = 0;
 static struct rtimer timer_rtimer;
 static rtimer_clock_t interval = RTIMER_SECOND / 4;
@@ -61,7 +60,9 @@ static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *sr
   
   // if(type == PKT_DATA) {
   const data_pkt_t *p = data;
+
   printf("Received packet from %u\n", src->u8[7]);
+  printf("Received chunk %d\n", p->seq);
 
   for(uint8_t i=0;i<CHUNK_SIZE;i++){
     uint8_t idx = p->seq * CHUNK_SIZE + i;
@@ -69,13 +70,19 @@ static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *sr
     motion_buf[idx] = p->payload[2*i+1];
   }
 
-  send_ack(src, p -> seq);
+  send_ack(src, p->seq);
   chunks_rx++;
 
   if(chunks_rx * CHUNK_SIZE >= SAMPLES){
-    printf("Light:"); for(uint8_t i=0; i < SAMPLES; i++) printf(i?", %d":" %d", light_buf[i]);
-    printf("\nMotion:"); for(uint8_t i=0; i < SAMPLES; i++) printf(i?", %d":" %d", motion_buf[i]); printf("\n");
-    peer_set=0;
+    printf("Light:"); 
+    for(uint8_t i=0; i < SAMPLES; i++) {
+      printf(i?", %d":" %d", light_buf[i]);
+    }
+    printf("\nMotion:");
+    for(uint8_t i=0; i < SAMPLES; i++) {
+      printf(i?", %d":" %d", motion_buf[i]);
+    }
+    printf("\n");
   }
   // }
 }
@@ -92,12 +99,8 @@ void timer_callback(struct rtimer *t, void *ptr) {
 PROCESS_THREAD(process_rtimer, ev, data) {
     PROCESS_BEGIN();
     nullnet_set_input_callback(node_b_callback);
-    
-    while(1) {
-        // Start the periodic callback (every 250 ms)
-        rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
-        PROCESS_YIELD();
-    }
+    // Start the periodic callback (every 250 ms)
+    rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
 
     PROCESS_END();
 }
