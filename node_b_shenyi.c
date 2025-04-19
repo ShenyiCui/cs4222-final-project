@@ -16,7 +16,7 @@
 #define PKT_DATA    0x03
 #define PKT_ACK     0x04
 
-#define BEACON_PERIOD (2*CLOCK_SECOND)
+#define BEACON_PERIOD (CLOCK_SECOND / 2)
 
 // Global variables
 static uint8_t chunks_rx = 0;
@@ -44,16 +44,21 @@ static void send_ack(const linkaddr_t *dest, uint8_t seq) {
   NETSTACK_NETWORK.output(dest);
 } 
 
-static void send_beacon(void){
-  nullnet_buf=&beacon_byte;
-  nullnet_len=1;
+static void send_beacon(void) {
+  NETSTACK_RADIO.on();
+  // send a beacon packet 20 times
+  // for (int i = 0; i < 50; i++) {
+  nullnet_buf  = &beacon_byte;
+  nullnet_len  = 1;
   NETSTACK_NETWORK.output(NULL);
+  // }
 }
 
 /* input */
-static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest){
+static void node_b_rx(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest){
   // if(len != sizeof(data_packet_struct)) return;
-  static data_packet_struct pkt; memcpy(&pkt,data,len);
+  static data_packet_struct pkt; 
+  memcpy(&pkt,data,len);
 
   // uint8_t type = ((uint8_t*)data)[0];
 
@@ -75,7 +80,6 @@ static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *sr
 
   send_ack(src, pkt.seq);
   chunks_rx++;
-  // }
 }
 
 PROCESS(node_b_proc,"Node B RX");
@@ -83,7 +87,8 @@ AUTOSTART_PROCESSES(&node_b_proc);
 
 PROCESS_THREAD(node_b_proc, ev, data){
   PROCESS_BEGIN();
-  nullnet_set_input_callback(node_b_callback);
+  nullnet_set_input_callback(node_b_rx);
+  
   etimer_set(&beacon_timer, BEACON_PERIOD);
 
   while(1){ 
