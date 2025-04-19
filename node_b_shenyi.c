@@ -13,7 +13,7 @@
 #define SAMPLES     20
 #define CHUNK_SIZE  20
 
-#define PKT_REQUEST 0x02
+#define PKT_BEACON  0x01
 #define PKT_DATA    0x03
 #define PKT_ACK     0x04
 
@@ -24,8 +24,8 @@ AUTOSTART_PROCESSES(&process_rtimer);
 static uint8_t peer_set = 0;
 static uint8_t chunks_rx = 0;
 static struct rtimer timer_rtimer;
-static linkaddr_t peer;
 static rtimer_clock_t interval = RTIMER_SECOND / 4;
+static uint8_t beacon_byte = PKT_BEACON;
 static int16_t light_buf[SAMPLES];
 static int16_t motion_buf[SAMPLES];
 
@@ -42,26 +42,26 @@ static void send_ack(const linkaddr_t *dest, uint8_t seq) {
   NETSTACK_NETWORK.output(dest);
 } 
 
+static void send_beacon(void){
+  nullnet_buf=&beacon_byte;
+  nullnet_len=1;
+  NETSTACK_NETWORK.output(NULL);
+}
+
 /* input */
-static void node_b_callback(const void *data, uint16_t len,const linkaddr_t *src,const linkaddr_t *dest){
-  if(len<1) return;
+static void node_b_callback(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest){
+  if(len < 1) return;
 
   uint8_t type = ((uint8_t*)data)[0];
 
-  if(type == PKT_REQUEST){
-    linkaddr_copy(&peer,src);
-    peer_set = 1;
-    chunks_rx = 0;
-    printf("%lu DETECT %u RSSI: %d\n", clock_seconds(), src->u8[7], (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
-    /* respond by expecting data; nothing else to send */
-
-  } else if(type == PKT_DATA && peer_set && linkaddr_cmp(src,&peer)) {
-    const data_pkt_t *p=data;
+  if(type == PKT_DATA) {
+    const data_pkt_t *p = data;
+    printf("Received packet from %u\n", src->u8[7]);
 
     for(uint8_t i=0;i<CHUNK_SIZE;i++){
-      uint8_t idx = p -> seq*CHUNK_SIZE + i;
-      light_buf[idx] = p -> payload[2*i];
-      motion_buf[idx] = p -> payload[2*i+1];
+      uint8_t idx = p->seq * CHUNK_SIZE + i;
+      light_buf[idx] = p->payload[2*i];
+      motion_buf[idx] = p->payload[2*i+1];
     }
 
     send_ack(src, p -> seq);
@@ -80,8 +80,7 @@ static void node_b_callback(const void *data, uint16_t len,const linkaddr_t *src
  * It both polls sensors and advances the state machine.
  */
 void timer_callback(struct rtimer *t, void *ptr) {
-  
-  // Schedule the next callback after 250ms.
+  send_beacon();
   rtimer_set(&timer_rtimer, RTIMER_NOW() + interval, 0, timer_callback, NULL);
 }
 
