@@ -10,10 +10,19 @@
 #include <string.h>
 #include <stdio.h>
 #include "node-id.h"
+#include "board-peripherals.h"   // opt_3001_sensor & mpu_9250_sensor
+#include <math.h>                 // sqrt()
 
-/* === User‑supplied sensor APIs === */
-extern int   get_light_reading(void);      // lux
-extern float get_mpu_reading(void);        // |acc| in g
+static void init_opt_reading(void) {
+  SENSORS_ACTIVATE(opt_3001_sensor);
+}
+
+static void init_mpu_reading(void) {
+  mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL);
+}
+
+static int get_light_reading(void);
+static float get_mpu_reading(void);
 
 #define SAMPLES               60
 #define SAMPLE_INTERVAL       CLOCK_SECOND      // 1 Hz
@@ -51,6 +60,26 @@ static void send_beacon(void);
 static void start_transfer(void);
 static void send_next_chunk(void);
 
+static int get_light_reading() {
+  int value = opt_3001_sensor.value(0);
+  if(value != CC26XX_SENSOR_READING_ERROR) {
+     init_opt_reading();
+     return value / 100;
+  } else {
+     printf("Light sensor warming up\n");
+     init_opt_reading();
+     return -1;
+  }
+}
+
+static float get_mpu_reading() {
+  int ax = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_X) / 100;
+  int ay = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Y) / 100;
+  int az = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Z) / 100;
+  float x = (float)ax, y = (float)ay, z = (float)az;
+  return sqrt(x * x + y * y + z * z);
+}
+
 static void input_cb(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest)
 {
   if(len < 1) return;
@@ -82,6 +111,9 @@ PROCESS_THREAD(tx_main_proc, ev, data)
   static struct etimer sample_t;
   static struct etimer beacon_t;
   PROCESS_BEGIN();
+
+  init_opt_reading();
+  init_mpu_reading();
 
   nullnet_set_input_callback(input_cb);
   etimer_set(&sample_t, SAMPLE_INTERVAL);
