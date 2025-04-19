@@ -17,9 +17,8 @@ static void input_cb(const void *data, uint16_t len,
                      const linkaddr_t *src, const linkaddr_t *dest)
 {
   if(len == 1 && ((const uint8_t *)data)[0] == PKT_BEACON) {
-    int rssi = (int)packetbuf_attr(PACKETBUF_ATTR_RSSI);
     printf("%lu BEACON_RX from %02x:%02x  RSSI: %d dBm\n",
-           clock_seconds(), src->u8[0], src->u8[1], rssi);
+           clock_seconds(), src->u8[0], src->u8[1], (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
   }
 }
 
