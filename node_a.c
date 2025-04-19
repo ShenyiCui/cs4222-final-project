@@ -6,15 +6,13 @@
 #include "net/nullnet/nullnet.h"
 #include "net/netstack.h"
 #include "net/packetbuf.h"
-#include "board-peripherals.h"
 #include <stdio.h>
 #include <string.h>
-#include <math.h>
 
 /* ------------ parameters ------------ */
 #define SAMPLE_INTERVAL    CLOCK_SECOND          // 1 Hz
-#define SAMPLES            60
-#define CHUNK_SIZE         20                   // 3 chunks
+#define SAMPLES            20                    // 20
+#define CHUNK_SIZE         1                     // 1 chunk
 #define BEACON_PERIOD      (2*CLOCK_SECOND)
 #define RSSI_THRESHOLD     (-70)                // dBm
 #define GOOD_REQUIRED      3
@@ -25,19 +23,29 @@
 #define PKT_DATA     0x03   // sensor chunk
 #define PKT_ACK      0x04   // ack each chunk
 
-/* ------------ sensor helpers (reuse Assignment‑2) ------------ */
-static void init_opt(void) { SENSORS_ACTIVATE(opt_3001_sensor);} 
-static void init_mpu(void) { mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL);} 
+/* ------ dummy sensor stubs ------ */
+static void init_opt(void) {}
+static void init_mpu(void) {}
 
-static int get_light(void) { 
-  return 50;
+static int16_t get_light(void)
+{
+  static int16_t v = 100; // dummy increasing lux
+  return v += 5;
 }
-static int16_t get_motion_scaled(void) {
-  return (int16_t) 50;
+
+static int16_t get_motion_scaled(void)
+{
+  static int16_t m = 10;  // dummy motion (0.10 g)
+  return m += 2;
 }
+
+/* ------------ link‑quality state ------------ */
+typedef enum { LINK_SEARCHING = 0 , LINK_UP = 1 } link_state_t;
+static link_state_t link_state = LINK_SEARCHING;
+static uint8_t bad_cnt = 0;        // consecutive below‑threshold RSSI
 
 /* ------------ buffers ------------ */
-static int16_t light_buf[SAMPLES];     // store as 16‑bit to fit MTU
+static int16_t light_buf[SAMPLES];     // store as 16‑bit dummy sensor storage
 static int16_t motion_buf[SAMPLES];
 static uint8_t sample_idx = 0;
 static uint8_t buffer_full = 0;
@@ -64,13 +72,31 @@ static void send_chunk(uint8_t seq);
 static void rx_cb(const void *data, uint16_t len, const linkaddr_t *src, const linkaddr_t *dest) {
   if(len==1 && *(uint8_t*) data == PKT_BEACON) {
     signed short rssi=(signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
-    printf("%lu RX_BEACON %02x:%02x RSSI %d\n",clock_seconds(),src->u8[0],src->u8[1],rssi);
-    if(rssi>=RSSI_THRESHOLD){
-      if(!peer_set){ linkaddr_copy(&peer,src); peer_set=1; good_cnt=1; }
-      else if(linkaddr_cmp(src,&peer)) good_cnt++; }
-    else if(peer_set && linkaddr_cmp(src,&peer)) good_cnt=0;
+    if(link_state == LINK_SEARCHING)
+      printf("%lu SEARCHING – RSSI: %d dBm\n", clock_seconds(), rssi);
+    else
+      printf("%lu LINK_ESTABLISHED – RSSI: %d dBm\n", clock_seconds(), rssi);
+    
+    if(rssi >= RSSI_THRESHOLD) {
+      good_cnt++;
+      bad_cnt = 0;
+    } else {
+      bad_cnt++;
+      good_cnt = 0;
+    }
 
-    if(buffer_full && peer_set && good_cnt>=GOOD_REQUIRED && !sending){
+    /* transitions */
+    if(link_state == LINK_SEARCHING && good_cnt >= GOOD_REQUIRED) {
+      link_state = LINK_UP;
+      printf("%lu LINK ESTABLISHED (avg good %u)\n", clock_seconds(), good_cnt);
+    }
+
+    if(link_state == LINK_UP && bad_cnt >= GOOD_REQUIRED) {
+      link_state = LINK_SEARCHING;
+      printf("%lu LINK LOST – back to SEARCHING\n", clock_seconds());
+    }
+
+    if(buffer_full && peer_set && link_state==LINK_UP && !sending){
       printf("%lu DETECT %u\n",clock_seconds(),peer.u8[7]);
       uint8_t req=PKT_REQUEST; nullnet_buf=&req; nullnet_len=1; NETSTACK_NETWORK.output(&peer);
       start_transfer();
@@ -85,6 +111,7 @@ static void rx_cb(const void *data, uint16_t len, const linkaddr_t *src, const l
         memset(light_buf,0,sizeof(light_buf));
         memset(motion_buf,0,sizeof(motion_buf));
         sample_idx=0; buffer_full=0; sending=0; seq_idx=0; good_cnt=0; peer_set=0;
+        link_state = LINK_SEARCHING; good_cnt = 0; bad_cnt = 0;
         printf("%lu TRANSFER_COMPLETE\n",clock_seconds());
       } else {
         send_chunk(seq_idx);
@@ -114,6 +141,10 @@ PROCESS_THREAD(node_a_proc,ev,data){
       motion_buf[sample_idx] = get_motion_scaled();
       sample_idx++;
       if(sample_idx>=SAMPLES){ buffer_full=1; sample_idx=SAMPLES; }
+      
+      uint8_t chunks_ready = sample_idx / CHUNK_SIZE;
+      printf("%lu Buf %u/%u samples (%u chunk%s ready)\n", clock_seconds(), sample_idx, SAMPLES, chunks_ready, chunks_ready==1?"":"s");
+      
       etimer_reset(&sample_timer);
     }
     if(etimer_expired(&beacon_timer) && !sending){ send_beacon(); etimer_reset(&beacon_timer);}  }
