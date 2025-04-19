@@ -38,7 +38,12 @@ static void send_beacon(void){
   NETSTACK_NETWORK.output(NULL);
 }
 
-static void send_ack(const linkaddr_t *dest,uint8_t seq){ uint8_t ack[2]={PKT_ACK,seq}; nullnet_buf=ack; nullnet_len=2; NETSTACK_NETWORK.output(dest);} 
+static void send_ack(const linkaddr_t *dest, uint8_t seq) { 
+  uint8_t ack[2]={PKT_ACK, seq};
+  nullnet_buf=ack;
+  nullnet_len=2;
+  NETSTACK_NETWORK.output(dest);
+} 
 
 /* input */
 static void rx_cb(const void *data,uint16_t len,const linkaddr_t *src,const linkaddr_t *dest){

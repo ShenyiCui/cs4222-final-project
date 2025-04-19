@@ -147,7 +147,11 @@ PROCESS_THREAD(node_a_proc,ev,data){
       
       etimer_reset(&sample_timer);
     }
-    if(etimer_expired(&beacon_timer) && !sending){ send_beacon(); etimer_reset(&beacon_timer);}  }
+    if(etimer_expired(&beacon_timer) && !sending){ 
+      send_beacon();
+      etimer_reset(&beacon_timer);
+    }  
+  }
   PROCESS_END();
 }
 
