@@ -102,13 +102,17 @@ static void send_request(struct rtimer *t, void *ptr){
 
 /* ------------ listen window end ------------ */
 static void listen_window_end(struct rtimer *t, void *ptr){
-  /* Close the radio to save power */
+  /* Close the radio after the listening window */
   NETSTACK_RADIO.off();
 
-  /* If we still haven't established a good link, try again */
   if(link_state == LINK_SEARCHING){
-    rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0,
-               send_request, NULL);
+      /* No good link yet – retry after a sleep slot */
+      rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0,
+                 send_request, NULL);
+  } else if(link_state == LINK_UP){
+      /* Good link established during this window – start data phase */
+      rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
+                 send_chunks, NULL);
   }
 }
 
@@ -160,13 +164,12 @@ static void receive_cb(const void *data, uint16_t len,
     printf("%lu RX REQ_ACK cnt=%u rssi=%d\n",
            clock_seconds(), good_cnt, rssi);
 
-    if(good_cnt >= 3 && link_state == LINK_SEARCHING){
-      link_state = LINK_UP;
-      printf("LINK UP: start data transfer\n");
-      rtimer_set(&timer_rtimer, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
-                 send_chunks, NULL);
+    if(good_cnt >= 3 && link_state == LINK_SEARCHING) {
+       link_state = LINK_UP;
+       printf("LINK UP: start data transfer\n");
+       /* first chunk will be scheduled in listen_window_end() */
     }
-  }else if(type == PKT_ACK){
+  } else if(type == PKT_ACK) {
     uint8_t ackseq = ((const uint8_t*)data)[1];
     if(ackseq == curr_chunk){
       if((curr_chunk + 1)*CHUNK_SIZE >= SAMPLES){
@@ -185,7 +188,7 @@ static void receive_cb(const void *data, uint16_t len,
 }
 
 /* ------------ chunk sender ------------ */
-static void send_chunks(struct rtimer *t, void *ptr){
+static void send_chunks(struct rtimer *t, void *ptr) {
   printf(link_state == LINK_UP ? "LINK UP\n" : "LINK SEARCHING\n");
   printf(curr_chunk == -1 ? "No data to send\n" : "Sending chunk %d\n", curr_chunk);
   if(link_state == LINK_UP && curr_chunk != -1) {
