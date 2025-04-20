@@ -218,7 +218,7 @@ static void send_chunks(struct rtimer *t, void *ptr) {
     return;                                   /* nothing to do */
   }
   // printf in the format: <timestamp_in_seconds> TRANSFER <nodeID> <avg. link quality>
-  printf("%lu TRANSFER-TO %u RSSI: %d\n", clock_seconds(), peer.u16[0], (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
+  printf("%lu TRANSFER-FROM %u RSSI: %d\n", clock_seconds(), node_id, (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
 
   last_sent_seq  = curr_chunk;
   awaiting_ack   = 1;
