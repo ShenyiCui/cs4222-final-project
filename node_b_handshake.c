@@ -41,7 +41,7 @@ typedef struct __attribute__((packed)) {
 } data_packet_struct;
 
 /* ------------ helpers ------------ */
-static void send_ack(const linkaddr_t *dest, uint8_t seq){
+static void send_ack(const linkaddr_t *dest, uint8_t seq) {
   uint8_t ack[2] = { PKT_ACK , seq };
   nullnet_buf = ack;
   nullnet_len = 2;
@@ -74,9 +74,6 @@ char listen_beacon(struct rtimer *t, void *ptr) {
       NETSTACK_RADIO.off();
       // SLEEP_SLOT cannot be too large as value will overflow,
       // to have a large sleep interval, sleep many times instead
-
-      // get a value that is uniformly distributed between 0 and 2*SLEEP_CYCLE
-      // the average is SLEEP_CYCLE 
       NumSleep = 7;  
       for(i = 0; i < NumSleep; i++){
         rtimer_set(t, RTIMER_TIME(t) + SLEEP_SLOT, 1, (rtimer_callback_t)listen_beacon, ptr);
