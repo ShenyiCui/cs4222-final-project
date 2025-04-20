@@ -217,8 +217,8 @@ static void send_chunks(struct rtimer *t, void *ptr) {
   if(link_state != LINK_UP || curr_chunk == -1){
     return;                                   /* nothing to do */
   }
-  // printf in the format: <timestamp_in_seconds> TRANSFER <nodeID> <avg. link quality>
-  printf("%lu TRANSFER-FROM %u RSSI: %d\n", clock_seconds(), node_id, (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
+  // printf in the format: <timestamp_in_seconds> TRANSFER <nodeID>
+  printf("%lu TRANSFER-FROM %u\n", clock_seconds(), node_id);
 
   last_sent_seq  = curr_chunk;
   awaiting_ack   = 1;
