@@ -46,7 +46,8 @@ typedef struct __attribute__((packed)) {
 } data_pkt_t;
 
 /* ------------ buffers ------------ */
-static uint8_t  chunks_rx = 0;
+static uint8_t chunks_rx   = 0;      /* how many chunks so far   */
+static uint8_t expect_seen = 0;      /* flag: 1 after all 3 rx’d */
 static int16_t  light_buf[SAMPLES];
 static int16_t  motion_buf[SAMPLES];
 
@@ -83,16 +84,15 @@ static void node_b_rx(const void *data, uint16_t len,
   if(!len) return;
   uint8_t type = ((const uint8_t*)data)[0];
 
-  printf("%lu RX %02x:%02x type=%d RSSI=%d\n",
-         clock_seconds(), src->u8[0], src->u8[1], type,
-         (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
+  const req_pkt_t *header = (const req_pkt_t *)data;
+  printf("%lu DETECT node %u\n", clock_seconds(), header->src_id);
 
   if(type == PKT_REQUEST) {
     ack_pkt_t ra = { PKT_REQ_ACK, node_id, 0 };
     nullnet_buf = (uint8_t *)&ra;
     nullnet_len = sizeof(ra);
     NETSTACK_NETWORK.output(src);
-    printf("TX REQ_ACK\n");
+    printf("TX REQ_ACK\n\n");
   } else if(type == PKT_DATA) {
     data_pkt_t pkt;
     memcpy(&pkt, data, len);
@@ -103,8 +103,14 @@ static void node_b_rx(const void *data, uint16_t len,
       uint8_t idx = pkt.seq*CHUNK_SIZE + i;
       light_buf[idx]  = pkt.payload[2*i];
       motion_buf[idx] = pkt.payload[2*i+1];
-      printf(" sample %d  light=%d  motion=%d\n",
-             idx, light_buf[idx], motion_buf[idx]);
+      // printf(" sample %d  light=%d  motion=%d\n",
+      //        idx, light_buf[idx], motion_buf[idx]);
+    }
+
+    /* mark that one more chunk arrived */
+    chunks_rx++;
+    if(chunks_rx == 3) {
+        expect_seen = 1;
     }
 
     ack_pkt_t ack = { PKT_ACK, node_id, pkt.seq };
@@ -113,8 +119,23 @@ static void node_b_rx(const void *data, uint16_t len,
         nullnet_len = sizeof(ack);
         NETSTACK_NETWORK.output(src);
     }
-    printf("TX DATA_ACK x5 seq %d\n", pkt.seq);
-    chunks_rx++;
+    printf("TX DATA_ACK x5 seq %d\n\n", pkt.seq);
+  }
+
+  if(expect_seen) {
+    printf("Light:");
+    for(int i=0;i<SAMPLES;i++){
+        printf(" %d%s", light_buf[i], (i==SAMPLES-1)?"":" ,");
+    }
+    printf("\nMotion:");
+    for(int i=0;i<SAMPLES;i++){
+        printf(" %d%s", motion_buf[i], (i==SAMPLES-1)?"":" ,");
+    }
+    printf("\n");
+
+    /* reset for next transfer */
+    chunks_rx   = 0;
+    expect_seen = 0;
   }
 }
 

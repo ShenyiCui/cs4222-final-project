@@ -158,10 +158,6 @@ static void receive_cb(const void *data, uint16_t len,
   if(!len) return;
   uint8_t type = ((const uint8_t*)data)[0];
 
-  printf("%lu RX %02x:%02x type=%d RSSI=%d\n",
-         clock_seconds(), src->u8[0], src->u8[1], type,
-         (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
-
   if(type == PKT_REQ_ACK) {
     ack_pkt_t *ackp = (ack_pkt_t *)data;
     uint16_t   sender_id = ackp->src_id;
@@ -184,16 +180,23 @@ static void receive_cb(const void *data, uint16_t len,
 
     if(good_cnt >= 3 && link_state == LINK_SEARCHING){
         link_state = LINK_UP;
-        printf("LINK UP: start data transfer\n");
+        printf("LINK UP: start data transfer\n\n");
         /* first chunk is scheduled by listen_window_end() */
     }
   } else if(type == PKT_ACK) {
     ack_pkt_t *ack = (ack_pkt_t *)data;
     uint8_t ackseq = ack->seq;
+    signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
+
     if(ackseq == last_sent_seq){
       awaiting_ack = 0;          /* ACK heard within listening window */
     }
-    if(ackseq == curr_chunk){
+
+    if(ackseq == curr_chunk) {
+      uint16_t sender_id = ack->src_id;
+      printf("%lu DETECT node %u  PKT_ACK seq=%u  rssi=%d\n",
+        clock_seconds(), sender_id, curr_chunk, rssi);
+
       if((curr_chunk + 1)*CHUNK_SIZE >= SAMPLES){
         printf("Transfer complete\n");
         memset(light_buf, 0, sizeof(light_buf));
@@ -214,8 +217,8 @@ static void send_chunks(struct rtimer *t, void *ptr) {
   if(link_state != LINK_UP || curr_chunk == -1){
     return;                                   /* nothing to do */
   }
-
-  printf("TX DATA chunk %d\n", curr_chunk);
+  // printf in the format: <timestamp_in_seconds> TRANSFER <nodeID> <avg. link quality>
+  printf("%lu TRANSFER-TO %u RSSI: %d\n", clock_seconds(), peer.u16[0], (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
 
   last_sent_seq  = curr_chunk;
   awaiting_ack   = 1;
