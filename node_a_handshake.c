@@ -21,6 +21,9 @@ AUTOSTART_PROCESSES(&process_rtimer);
 #define SAMPLES            60
 #define CHUNK_SIZE         20                   // 3 chunks
 #define SEND_CHUNK_INTERVAL      (RTIMER_SECOND / 4) // 250ms
+/* radio duty‑cycling for request/ack phase */
+#define WAKE_TIME   (RTIMER_SECOND / 10)   /* 100 ms listening window  */
+#define SLEEP_SLOT  (RTIMER_SECOND / 10)   /* 100 ms sleep before next request */
 
 /* ------------ packet types ------------ */
 #define PKT_BEACON   0x01
@@ -58,6 +61,7 @@ static data_packet_struct data_packet;
 /* forward decls */
 static void send_chunks(struct rtimer *t, void *ptr);
 static void send_request(struct rtimer *t, void *ptr);
+static void listen_window_end(struct rtimer *t, void *ptr);
 
 /* ------------ sensor helpers ------------ */
 static void   init_opt_reading(void) { SENSORS_ACTIVATE(opt_3001_sensor); }
@@ -77,14 +81,33 @@ static float get_mpu_reading(void){
 
 /* ------------ request sender ------------ */
 static void send_request(struct rtimer *t, void *ptr){
+  /* Abort if the link is already up */
+  if(link_state != LINK_SEARCHING){
+    return;
+  }
+
   static uint8_t req = PKT_REQUEST;
   nullnet_buf = &req;
   nullnet_len = 1;
-  NETSTACK_NETWORK.output(NULL);                /* broadcast */
+  NETSTACK_NETWORK.output(NULL);            /* broadcast */
   printf("TX REQUEST\n");
 
+  /* Keep the radio on so we can hear the REQ_ACK replies */
+  NETSTACK_RADIO.on();
+
+  /* After WAKE_TIME, close the window and schedule the next action */
+  rtimer_set(t, RTIMER_NOW() + WAKE_TIME, 0,
+             listen_window_end, NULL);
+}
+
+/* ------------ listen window end ------------ */
+static void listen_window_end(struct rtimer *t, void *ptr){
+  /* Close the radio to save power */
+  NETSTACK_RADIO.off();
+
+  /* If we still haven't established a good link, try again */
   if(link_state == LINK_SEARCHING){
-    rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
+    rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0,
                send_request, NULL);
   }
 }
