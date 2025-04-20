@@ -162,7 +162,7 @@ static void receive_cb(const void *data, uint16_t len,
 
     if(good_cnt >= 3 && link_state == LINK_SEARCHING){
       link_state = LINK_UP;
-      printf("LINK UP – start data\n");
+      printf("LINK UP: start data transfer\n");
       rtimer_set(&timer_rtimer, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
                  send_chunks, NULL);
     }
@@ -186,7 +186,10 @@ static void receive_cb(const void *data, uint16_t len,
 
 /* ------------ chunk sender ------------ */
 static void send_chunks(struct rtimer *t, void *ptr){
-  if(link_state == LINK_UP && curr_chunk != -1){
+  printf(link_state == LINK_UP ? "LINK UP\n" : "LINK SEARCHING\n");
+  printf(curr_chunk == -1 ? "No data to send\n" : "Sending chunk %d\n", curr_chunk);
+  if(link_state == LINK_UP && curr_chunk != -1) {
+    printf("TX DATA chunk %d\n", curr_chunk);
     data_packet.type = PKT_DATA;
     data_packet.seq  = curr_chunk;
     for(uint8_t i=0;i<CHUNK_SIZE;i++){
@@ -197,7 +200,6 @@ static void send_chunks(struct rtimer *t, void *ptr){
     nullnet_buf = (uint8_t*)&data_packet;
     nullnet_len = sizeof(data_packet);
     NETSTACK_NETWORK.output(&peer);
-    printf("TX DATA chunk %d\n", curr_chunk);
   }
   rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
              send_chunks, ptr);
