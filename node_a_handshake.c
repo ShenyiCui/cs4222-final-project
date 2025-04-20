@@ -32,6 +32,27 @@ AUTOSTART_PROCESSES(&process_rtimer);
 #define PKT_ACK      0x04   // ack each chunk
 #define PKT_REQ_ACK  0x05   // reply to PKT_REQUEST
 
+/* ---- common packet formats ---- */
+typedef struct __attribute__((packed)) {
+  uint8_t  type;          /* PKT_* */
+  uint16_t src_id;        /* node_id of sender                */
+} req_pkt_t;              /* also reused for plain beacons     */
+
+typedef struct __attribute__((packed)) {
+  uint8_t  type;          /* PKT_* */
+  uint16_t src_id;        /* node_id of sender                */
+  uint8_t  seq;           /* chunk number (or 0)              */
+} ack_pkt_t;              /* used for REQ_ACK and DATA_ACK    */
+
+typedef struct __attribute__((packed)) {
+  uint8_t  type;          /* PKT_DATA                         */
+  uint16_t src_id;        /* node_id of sender                */
+  uint8_t  seq;           /* chunk number                     */
+  int16_t  payload[CHUNK_SIZE * 2];
+} data_pkt_t;
+
+static data_pkt_t data_packet;
+
 
 /* ------------ link state ------------ */
 typedef enum { LINK_SEARCHING = 0, LINK_UP = 1 } link_state_t;
@@ -52,14 +73,6 @@ static linkaddr_t     peer;
 
 static int awaiting_ack   = 0;   /* 1 while waiting for ACK               */
 static int last_sent_seq  = -1;  /* sequence number of the last chunk TX  */
-
-/* ------------ packet struct ------------ */
-typedef struct __attribute__((packed)) {
-  uint8_t  type;
-  uint8_t  seq;
-  int16_t  payload[CHUNK_SIZE * 2];
-} data_packet_struct;
-static data_packet_struct data_packet;
 
 /* forward decls */
 static void send_chunks(struct rtimer *t, void *ptr);
@@ -85,15 +98,12 @@ static float get_mpu_reading(void){
 
 /* ------------ request sender ------------ */
 static void send_request(struct rtimer *t, void *ptr){
-  /* Abort if the link is already up */
-  if(link_state != LINK_SEARCHING){
-    return;
-  }
+  if(link_state != LINK_SEARCHING) return;
 
-  static uint8_t req = PKT_REQUEST;
-  nullnet_buf = &req;
-  nullnet_len = 1;
-  NETSTACK_NETWORK.output(NULL);            /* broadcast */
+  req_pkt_t req = { PKT_REQUEST, node_id };
+  nullnet_buf   = (uint8_t *)&req;
+  nullnet_len   = sizeof(req);
+  NETSTACK_NETWORK.output(NULL);          /* broadcast */
   printf("TX REQUEST\n");
 
   /* Keep the radio on so we can hear the REQ_ACK replies */
@@ -124,7 +134,7 @@ static void listen_window_end(struct rtimer *t, void *ptr){
 static void timer_callback(struct rtimer *t, void *ptr){
   light_buf[sample_idx]  = get_light_reading();
   motion_buf[sample_idx] = (int)get_mpu_reading();
-  printf("Sample %u  light=%d  mpu=%d\n",
+  printf("COLLECTING DATA: Sample %u  light=%d  mpu=%d\n",
          sample_idx, light_buf[sample_idx], motion_buf[sample_idx]);
   sample_idx++;
 
@@ -152,29 +162,34 @@ static void receive_cb(const void *data, uint16_t len,
          clock_seconds(), src->u8[0], src->u8[1], type,
          (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
 
-  if(type == PKT_REQ_ACK){
+  if(type == PKT_REQ_ACK) {
+    ack_pkt_t *ackp = (ack_pkt_t *)data;
+    uint16_t   sender_id = ackp->src_id;
+
     signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
 
     if(!peer_set){
-      linkaddr_copy(&peer, src);
-      peer_set = 1;
-      good_cnt = 0;
+        linkaddr_copy(&peer, src);
+        peer_set = 1;
+        good_cnt = 0;
     }
     if(linkaddr_cmp(src,&peer) && rssi >= RSSI_GOOD_THRESHOLD){
-      good_cnt++;
-    }else if(linkaddr_cmp(src,&peer)){
-      good_cnt = 0;
+        good_cnt++;
+    } else if(linkaddr_cmp(src,&peer)){
+        good_cnt = 0;
     }
-    printf("%lu RX REQ_ACK cnt=%u rssi=%d\n",
-           clock_seconds(), good_cnt, rssi);
 
-    if(good_cnt >= 3 && link_state == LINK_SEARCHING) {
-       link_state = LINK_UP;
-       printf("LINK UP: start data transfer\n");
-       /* first chunk will be scheduled in listen_window_end() */
+    printf("%lu DETECT node %u  REQ_ACK cnt=%u  rssi=%d\n",
+            clock_seconds(), sender_id, good_cnt, rssi);
+
+    if(good_cnt >= 3 && link_state == LINK_SEARCHING){
+        link_state = LINK_UP;
+        printf("LINK UP: start data transfer\n");
+        /* first chunk is scheduled by listen_window_end() */
     }
   } else if(type == PKT_ACK) {
-    uint8_t ackseq = ((const uint8_t*)data)[1];
+    ack_pkt_t *ack = (ack_pkt_t *)data;
+    uint8_t ackseq = ack->seq;
     if(ackseq == last_sent_seq){
       awaiting_ack = 0;          /* ACK heard within listening window */
     }
@@ -205,8 +220,9 @@ static void send_chunks(struct rtimer *t, void *ptr) {
   last_sent_seq  = curr_chunk;
   awaiting_ack   = 1;
 
-  data_packet.type = PKT_DATA;
-  data_packet.seq  = curr_chunk;
+  data_packet.type   = PKT_DATA;
+  data_packet.src_id = node_id;
+  data_packet.seq    = curr_chunk;
   for(uint8_t i=0;i<CHUNK_SIZE;i++){
     uint8_t idx = curr_chunk*CHUNK_SIZE + i;
     data_packet.payload[2*i]     = light_buf[idx];
