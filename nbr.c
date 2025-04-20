@@ -24,7 +24,6 @@
 
 // Configures the wake-up timer for neighbour discovery 
 #define WAKE_TIME RTIMER_SECOND/10    // 10 Hz, 0.1 s
-#define SLEEP_CYCLE  4                // Default value (used when not in aggressive mode)
 #define SLEEP_SLOT RTIMER_SECOND/10   // 0.1 s
 #define FLAG_ACK 0x01    // dedicated ACK flag carried in every packet
 
@@ -33,7 +32,7 @@ linkaddr_t dest_addr;
 #define NUM_SEND 2
 
 // In low mode we choose a somewhat conservative (power–saving) sleep count.
-#define LOW_SLEEP_COUNT  (2 * SLEEP_CYCLE)  // Adjust as needed for power saving
+#define LOW_SLEEP_COUNT  18  // Adjust as needed for power saving
 
 // Mode definitions
 #define MODE_NORMAL      0   // low duty cycle discovery
