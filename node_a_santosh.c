@@ -24,6 +24,7 @@ AUTOSTART_PROCESSES(&process_rtimer);
 
 /* ------------ packet types ------------ */
 #define PKT_BEACON   0x01
+#define PKT_REQUEST  0x02   // request for data
 #define PKT_DATA     0x03   // sensor chunk
 #define PKT_ACK      0x04   // ack each chunk
 
@@ -110,12 +111,20 @@ void receive_cb(const void *data, uint16_t len, const linkaddr_t *src, const lin
     uint8_t type = ((uint8_t*)data)[0];
 
     if(type == PKT_BEACON) {
-        signed short rssi=(signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
+        signed short rssi = (signed short) packetbuf_attr(PACKETBUF_ATTR_RSSI);
         printf("%lu RX_BEACON %02x:%02x RSSI %d\n",clock_seconds(),src->u8[0],src->u8[1],rssi);
-        if(rssi>=RSSI_GOOD_THRESHOLD){
-            if(!peer_set){ linkaddr_copy(&peer,src); peer_set=1; good_cnt=1; }
-            else if(linkaddr_cmp(src,&peer)) good_cnt++;
-        } else if(peer_set && linkaddr_cmp(src,&peer)) good_cnt=0;
+        if(rssi >= RSSI_GOOD_THRESHOLD){
+            if(!peer_set){ 
+                linkaddr_copy(&peer, src);
+                peer_set=1;
+                good_cnt=1;
+            }
+            else if(linkaddr_cmp(src, &peer)) {
+                good_cnt++;
+            }
+        } else if(peer_set && linkaddr_cmp(src,&peer)) {
+            good_cnt=0;
+        }
     } else if (type == PKT_ACK) {
         uint8_t ackseq=((uint8_t*)data)[1];
         if(ackseq==curr_chunk){
