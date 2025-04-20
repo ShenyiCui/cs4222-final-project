@@ -50,6 +50,9 @@ static uint8_t  good_cnt  = 0;           /* consecutive REQ‑ACK ≥ ‑70 dB
 static int            peer_set = 0;
 static linkaddr_t     peer;
 
+static int awaiting_ack   = 0;   /* 1 while waiting for ACK               */
+static int last_sent_seq  = -1;  /* sequence number of the last chunk TX  */
+
 /* ------------ packet struct ------------ */
 typedef struct __attribute__((packed)) {
   uint8_t  type;
@@ -62,6 +65,7 @@ static data_packet_struct data_packet;
 static void send_chunks(struct rtimer *t, void *ptr);
 static void send_request(struct rtimer *t, void *ptr);
 static void listen_window_end(struct rtimer *t, void *ptr);
+static void chunk_listen_end(struct rtimer *t, void *ptr);
 
 /* ------------ sensor helpers ------------ */
 static void   init_opt_reading(void) { SENSORS_ACTIVATE(opt_3001_sensor); }
@@ -171,6 +175,9 @@ static void receive_cb(const void *data, uint16_t len,
     }
   } else if(type == PKT_ACK) {
     uint8_t ackseq = ((const uint8_t*)data)[1];
+    if(ackseq == last_sent_seq){
+      awaiting_ack = 0;          /* ACK heard within listening window */
+    }
     if(ackseq == curr_chunk){
       if((curr_chunk + 1)*CHUNK_SIZE >= SAMPLES){
         printf("Transfer complete\n");
@@ -189,23 +196,49 @@ static void receive_cb(const void *data, uint16_t len,
 
 /* ------------ chunk sender ------------ */
 static void send_chunks(struct rtimer *t, void *ptr) {
-  printf(link_state == LINK_UP ? "LINK UP\n" : "LINK SEARCHING\n");
-  printf(curr_chunk == -1 ? "No data to send\n" : "Sending chunk %d\n", curr_chunk);
-  if(link_state == LINK_UP && curr_chunk != -1) {
-    printf("TX DATA chunk %d\n", curr_chunk);
-    data_packet.type = PKT_DATA;
-    data_packet.seq  = curr_chunk;
-    for(uint8_t i=0;i<CHUNK_SIZE;i++){
-      uint8_t idx = curr_chunk*CHUNK_SIZE + i;
-      data_packet.payload[2*i]     = light_buf[idx];
-      data_packet.payload[2*i +1 ] = motion_buf[idx];
-    }
-    nullnet_buf = (uint8_t*)&data_packet;
-    nullnet_len = sizeof(data_packet);
-    NETSTACK_NETWORK.output(&peer);
+  if(link_state != LINK_UP || curr_chunk == -1){
+    return;                                   /* nothing to do */
   }
-  rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
-             send_chunks, ptr);
+
+  printf("TX DATA chunk %d\n", curr_chunk);
+
+  last_sent_seq  = curr_chunk;
+  awaiting_ack   = 1;
+
+  data_packet.type = PKT_DATA;
+  data_packet.seq  = curr_chunk;
+  for(uint8_t i=0;i<CHUNK_SIZE;i++){
+    uint8_t idx = curr_chunk*CHUNK_SIZE + i;
+    data_packet.payload[2*i]     = light_buf[idx];
+    data_packet.payload[2*i +1 ] = motion_buf[idx];
+  }
+  nullnet_buf = (uint8_t*)&data_packet;
+  nullnet_len = sizeof(data_packet);
+  NETSTACK_NETWORK.output(&peer);
+
+  /* keep the radio on to listen for ACKs */
+  NETSTACK_RADIO.on();
+
+  /* close listening window in WAKE_TIME */
+  rtimer_set(t, RTIMER_NOW() + WAKE_TIME, 0,
+             chunk_listen_end, NULL);
+}
+
+/* ------------ end of ACK listening window ------------ */
+static void chunk_listen_end(struct rtimer *t, void *ptr){
+  NETSTACK_RADIO.off();
+
+  if(link_state != LINK_UP) return;
+
+  if(awaiting_ack){
+    /* no ACK – retry same chunk after a short sleep */
+    rtimer_set(t, RTIMER_NOW() + SLEEP_SLOT, 0,
+               send_chunks, NULL);
+  }else if(curr_chunk != -1){
+    /* ACK received – next chunk (or finished) */
+    rtimer_set(t, RTIMER_NOW() + SEND_CHUNK_INTERVAL, 0,
+               send_chunks, NULL);
+  }
 }
 
 /* ------------ Contiki process ------------ */
