@@ -117,6 +117,10 @@ static void receive_cb(const void *data, uint16_t len,
   if(!len) return;
   uint8_t type = ((const uint8_t*)data)[0];
 
+  printf("%lu RX %02x:%02x type=%d RSSI=%d\n",
+         clock_seconds(), src->u8[0], src->u8[1], type,
+         (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
+
   if(type == PKT_REQ_ACK){
     signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
 
@@ -130,7 +134,7 @@ static void receive_cb(const void *data, uint16_t len,
     }else if(linkaddr_cmp(src,&peer)){
       good_cnt = 0;
     }
-    printf("%lu RX REQ_ACK  cnt=%u  rssi=%d\n",
+    printf("%lu RX REQ_ACK cnt=%u rssi=%d\n",
            clock_seconds(), good_cnt, rssi);
 
     if(good_cnt >= 3 && link_state == LINK_SEARCHING){

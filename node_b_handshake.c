@@ -104,7 +104,7 @@ static void node_b_rx(const void *data, uint16_t len,
     nullnet_buf = ra;
     nullnet_len = 2;
     NETSTACK_NETWORK.output(src);
-    printf("TX REQ_ACK\n");
+    printf("TX REQ_ACK\n\n");
   } else if(type == PKT_DATA) {
     static data_packet_struct pkt;
     memcpy(&pkt, data, len);
